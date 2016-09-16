@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 ZIG=~/projects/REPOS/zig/build/bin/zig
 SRC=securehash/autotest.zig
 VERBOSE=--verbose
@@ -14,5 +14,13 @@ for f in securehash/stderr_dbg.txt securehash/stderr_rel.txt checksecurehash.sh;
 	for s in $(seq 1 5); do
 	    ${p} ${f}
 	done
+    done
+done
+
+for s in $(seq 64); do
+    $(which printf) "%*s" ${s} "a" > TESTINPPUT.txt
+    echo "sha1 summing file 'TESTINPUT.txt' ${s}"
+    for p in sha1sum securehash/autotest_debug securehash/autotest_release; do
+	${p} TESTINPPUT.txt
     done
 done
