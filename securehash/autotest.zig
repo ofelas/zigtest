@@ -15,10 +15,11 @@ const securehash = @import("securehash.zig");
 const sha1 = securehash.sha1;
 
 // 16 MiB -> ok, need to allocate this memory (crashes if in function)
-var buf: [16 * 1024 * 1024]u8 = zeroes; // undefined?
+var databuf: [2 << 20]u8 = undefined; // zeroes?
 
 pub fn main(args: [][] u8) -> %void {
     //    var allocator: &Allocator;
+    
     var h: securehash.Sha1Digest = undefined;
     var d: [securehash.Sha1DigestSize * 2]u8 = zeroes;
 
@@ -50,18 +51,18 @@ pub fn main(args: [][] u8) -> %void {
 
     }
     for (args[1...]) |arg, i| {
-        var is: io.InStream = undefined;
-        is.open(arg) %% |err| {
+        var input: io.InStream = undefined;
+        input.open(arg) %% |err| {
             %%io.stderr.printf("Unable to open file: ");
             %%io.stderr.printf(@errorName(err));
             %%io.stderr.printf("\n");
             return err;
         }; //else {
-        //defer %%is.close();
-        const fsz = %%is.getEndPos();
+        //defer %%input.close();
+        const fsz = %%input.getEndPos();
         // pub fn mmap(address: ?&u8, length: usize, prot: usize, flags: usize, fd: i32, offset: usize)
-        var m = system.mmap(null, fsz, system.MMAP_PROT_READ, system.MMAP_MAP_ANON, is.fd, 0);
-        const sz = is.read(buf) %% |err| {
+        var m = system.mmap(null, fsz, system.MMAP_PROT_READ, system.MMAP_MAP_ANON, input.fd, 0);
+        const sz = input.read(databuf) %% |err| {
             %%io.stderr.write("Unable to read file: ");
             %%io.stderr.write(@errorName(err));
             %%io.stderr.printf("\n");
@@ -77,7 +78,7 @@ pub fn main(args: [][] u8) -> %void {
         // %%io.stdout.printInt(usize, sz);
         // %%io.stdout.printf(" bytes\n");
         //system.munmap((&u8)(&m), fsz);
-        is.close() %% |err| {
+        input.close() %% |err| {
             %%io.stderr.write("Unable to close file: ");
             %%io.stderr.write(@errorName(err));
             %%io.stderr.printf("\n");
@@ -85,7 +86,7 @@ pub fn main(args: [][] u8) -> %void {
         };
         h = zeroes;
         // ((&const x)[0...1])
-        %%securehash.sha1(buf, sz, h);
+        %%securehash.sha1(databuf, sz, h);
         d = zeroes;
         securehash.hexdigest(h, d);
         %%io.stdout.write(d);
