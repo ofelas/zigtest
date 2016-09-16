@@ -14,26 +14,26 @@ const assert = debug.assert;
 const securehash = @import("securehash.zig");
 const sha1 = securehash.sha1;
 
-// 16 MiB -> crash ok, need to allocate this memory
+// 16 MiB -> ok, need to allocate this memory (crashes if in function)
 var buf: [16 * 1024 * 1024]u8 = zeroes; // undefined?
-
 
 pub fn main(args: [][] u8) -> %void {
     //    var allocator: &Allocator;
+    var h: securehash.Sha1Digest = undefined;
+    var d: [securehash.Sha1DigestSize * 2]u8 = zeroes;
 
+    if (args.len < 2) {
     var s = "a93tgj0p34jagp9[agjp98ajrhp9aej]";
     //var s = "// 180.199.169.163.148.28.89.96.9.167.88.167.177.136.239.86.138.82.229.6.";
     const ref = "b4c7a9a3941c596009a758a7b188ef568a52e506";
     %%io.stdout.write("testing sha1 on '");
     %%io.stdout.write(s);
     %%io.stdout.printf("'\n");
-    var h: securehash.Sha1Digest = undefined;
     %%sha1(s, s.len, h);
     for (h) |v| {
         %%io.stdout.printInt(@typeOf(v), v);
         %%io.stdout.write(".");
     }
-    var d: [securehash.Sha1DigestSize * 2]u8 = zeroes;
     securehash.hexdigest(h, d);
     %%io.stdout.write(", hash len=");
     %%io.stdout.printInt(usize, h.len);
@@ -45,9 +45,10 @@ pub fn main(args: [][] u8) -> %void {
     %%io.stdout.printf("'\n");
     %%io.stdout.printf("sha1 test done\n");
     %%io.stdout.printf(ref ++ "\n");
-    %%io.stdout.printf("// 180.199.169.163.148.28.89.96.9.167.88.167.177.136.239.86.138.82.229.6.\n");
+    // %%io.stdout.printf("// 180.199.169.163.148.28.89.96.9.167.88.167.177.136.239.86.138.82.229.6.\n");
     //assert(d == ref);
 
+    }
     for (args[1...]) |arg, i| {
         var is: io.InStream = undefined;
         is.open(arg) %% |err| {
@@ -66,15 +67,15 @@ pub fn main(args: [][] u8) -> %void {
             %%io.stderr.printf("\n");
             return err;
         };
-        %%io.stdout.write("testing sha1 on file '");
-        %%io.stdout.write(arg);
-        %%io.stdout.write("', mmap=");
-        %%io.stdout.printInt(usize, m);
-        %%io.stdout.write(", ");
-        %%io.stdout.printInt(usize, fsz);
-        %%io.stdout.write(", ");
-        %%io.stdout.printInt(usize, sz);
-        %%io.stdout.printf(" bytes\n");
+        // %%io.stdout.write("testing sha1 on file '");
+        // %%io.stdout.write(arg);
+        // %%io.stdout.write("', mmap=");
+        // %%io.stdout.printInt(usize, m);
+        // %%io.stdout.write(", ");
+        // %%io.stdout.printInt(usize, fsz);
+        // %%io.stdout.write(", ");
+        // %%io.stdout.printInt(usize, sz);
+        // %%io.stdout.printf(" bytes\n");
         //system.munmap((&u8)(&m), fsz);
         is.close() %% |err| {
             %%io.stderr.write("Unable to close file: ");
@@ -88,6 +89,11 @@ pub fn main(args: [][] u8) -> %void {
         d = zeroes;
         securehash.hexdigest(h, d);
         %%io.stdout.write(d);
+        %%io.stdout.write("  ");
+        %%io.stdout.write(arg);
+        %%io.stdout.write("  # ");
+        %%io.stdout.printInt(usize, fsz);
+        %%io.stdout.write(" bytes");
         %%io.stdout.printf("\n");
     }
 

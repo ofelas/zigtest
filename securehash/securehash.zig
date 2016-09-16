@@ -45,6 +45,15 @@ const Sha1StateAddr = [5]&u32;
 const Sha1Buffer = [80]u32;
 //const Sha1HexString = [80]u8;
 
+// [5]u32 -> TODO array container init
+const INIT_STATE = []u32{
+    0x67452301,
+    0xefcdab89,
+    0x98badcfe,
+    0x10325476,
+    0xc3d2e1f0,
+};
+
 #static_eval_enable(!want_static_eval)
 fn clearBuffer(cb: Sha1Buffer) {
    for (cb) |*d| { *d = 0 };
@@ -188,11 +197,12 @@ fn computeInternal(src: []const u8, sz: usize, result: Sha1Digest) -> %void {
     var current_block = i32(0);
 
     // init(state) alternative, this fixes the state initialization
-    state[0] = u32(0x67452301);
-    state[1] = u32(0xefcdab89);
-    state[2] = u32(0x98badcfe);
-    state[3] = u32(0x10325476);
-    state[4] = u32(0xc3d2e1f0);
+    for (state) |*d, i| { *d = INIT_STATE[i]; }
+    // state[0] = u32(0x67452301);
+    // state[1] = u32(0xefcdab89);
+    // state[2] = u32(0x98badcfe);
+    // state[3] = u32(0x10325476);
+    // state[4] = u32(0xc3d2e1f0);
 
     while (current_block <= end_of_full_blocks) {
         end_current_block = current_block + 64;
