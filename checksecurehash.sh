@@ -11,7 +11,7 @@ ${ZIG} build ${VERBOSE} --release --static --export exe --name securehash/autote
 for f in securehash/stderr_dbg.txt securehash/stderr_rel.txt checksecurehash.sh; do
     for p in sha1sum securehash/autotest_debug securehash/autotest_release; do
 	echo "sha1 summing file '${f}' with ${p}"
-	for s in $(seq 1 5); do
+	for s in $(seq 1 3); do
 	    ${p} ${f}
 	done
     done

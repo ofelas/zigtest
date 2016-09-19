@@ -1,5 +1,5 @@
-// -*- indent-tabs-mode:nil; -*-
-// based on C sources with the followin info
+// -*- mode:zig; -*-
+// based on C sources with the following info
 // /*
 //  Copyright (c) 2011, Micael Hildenborg
 //  All rights reserved.
@@ -33,17 +33,20 @@
 //  Several members in the gamedev.se forum.
 //  Gregory Petrosyan
 //  */
-const want_static_eval: bool = false;
+
+//const want_static_eval: bool = false;
 
 const io = @import("std").io;
 const debug = @import("std").debug;
 
 pub const Sha1DigestSize = 20;
-pub const Sha1Digest = [Sha1DigestSize]u8;
-const Sha1State = [5]u32;
-const Sha1StateAddr = [5]&u32;
-const Sha1Buffer = [80]u32;
-//const Sha1HexString = [80]u8;
+pub const Sha1Digest = u8;
+
+const Sha1StateSize = 5;
+const Sha1State = u32;
+
+const Sha1BufferSize = 80;
+const Sha1Buffer = u32;
 
 // [5]u32 -> TODO array container init
 const INIT_STATE = []u32{
@@ -54,13 +57,13 @@ const INIT_STATE = []u32{
     0xc3d2e1f0,
 };
 
-#static_eval_enable(!want_static_eval)
-fn clearBuffer(cb: Sha1Buffer) {
+//#static_eval_enable(!want_static_eval)
+fn clearBuffer(cb: []Sha1Buffer) {
    for (cb) |*d| { *d = 0 };
 }
 
-#static_eval_enable(!want_static_eval)
-fn init(res: Sha1State) {
+//#static_eval_enable(!want_static_eval)
+fn init(res: []Sha1State) {
     res[0] = u32(0x67452301);
     res[1] = u32(0xefcdab89);
     res[2] = u32(0x98badcfe);
@@ -68,18 +71,18 @@ fn init(res: Sha1State) {
     res[4] = u32(0xc3d2e1f0);
 }
 
-#static_eval_enable(!want_static_eval)
+//#static_eval_enable(!want_static_eval)
 fn upperbitmask(bits: u32) -> u32{
    0xffffffff >> bits
 }
 
-#static_eval_enable(!want_static_eval)
+//#static_eval_enable(!want_static_eval)
 fn lowerbitmask(bits: u32) -> u32{
    ((0xffffffff) >> (32 - bits) << (32 - bits))
 }
 
 // circular shift...ror/rol
-#static_eval_enable(!want_static_eval)
+//#static_eval_enable(!want_static_eval)
 fn rot(value: u32, bits: u32) -> u32 {
     const um = upperbitmask(bits);
     const lm = lowerbitmask(bits);
@@ -93,13 +96,13 @@ fn rot(value: u32, bits: u32) -> u32 {
 
 error WeHaveABug;
 
-#static_eval_enable(want_static_eval)
-fn innerHash(state: Sha1State, w: Sha1Buffer) -> %void {
-    var a: @typeOf(state[0]) = state[0];
-    var b: u32 = state[1];
-    var c: u32 = state[2];
-    var d: u32 = state[3];
-    var e: u32 = state[4];
+//#static_eval_enable(want_static_eval)
+fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
+    var a  = state[0];
+    var b = state[1];
+    var c = state[2];
+    var d = state[3];
+    var e = state[4];
 
     var round = usize(0);
 
@@ -170,11 +173,11 @@ fn innerHash(state: Sha1State, w: Sha1Buffer) -> %void {
     state[3] +%= d;
     state[4] +%= e;
 
-    if (state[0] == 0) {
-        // need the following line
-        %%io.stdout.write("state[0]="); %%io.stdout.printInt(u32, state[0]); %%io.stdout.printf("\n");
-        return error.WeHaveABug;
-    }
+    // if (state[0] == 0) {
+    //     // need the following line
+    //     %%io.stdout.write("state[0]="); %%io.stdout.printInt(u32, state[0]); %%io.stdout.printf("\n");
+    //     return error.WeHaveABug;
+    // }
 }
 
 //#static_eval_enable(!want_static_eval)
@@ -183,26 +186,20 @@ fn align(inline T: type, v: i32, alignment: T) -> T {
 }
 
 //#static_eval_enable(!want_static_eval)
-fn computeInternal(src: []const u8, sz: usize, result: Sha1Digest) -> %void {
-    var state: Sha1State = zeroes;
-    var w: Sha1Buffer = zeroes;
-    // changed, see local alternatives below
-    // init(state);
-    // clearBuffer(w);
-    for (w) |*d| { *d = 0 }; // clearBuffer() alternative
+fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
+    var state: [5]Sha1State = zeroes;
+    var w: [80]Sha1Buffer = zeroes;
     const byte_len = sz;
     // the length of the input may be less that 64!? hence i32/isize
     const end_of_full_blocks = i32(byte_len) - 64;
     var end_current_block = i32(0);
     var current_block = i32(0);
 
-    // init(state) alternative, this fixes the state initialization
-    for (state) |*d, i| { *d = INIT_STATE[i]; }
-    // state[0] = u32(0x67452301);
-    // state[1] = u32(0xefcdab89);
-    // state[2] = u32(0x98badcfe);
-    // state[3] = u32(0x10325476);
-    // state[4] = u32(0xc3d2e1f0);
+    init(state);
+    // for (state) |*d, i| { *d = INIT_STATE[i]; }
+    clearBuffer(w);
+    //for (w) |*d| { *d = 0 }; // clearBuffer() alternative
+
 
     while (current_block <= end_of_full_blocks) {
         end_current_block = current_block + 64;
@@ -221,8 +218,8 @@ fn computeInternal(src: []const u8, sz: usize, result: Sha1Digest) -> %void {
     // Handle last and not full 64 byte block if existing
     end_current_block = i32(byte_len) -% current_block;
     // w = zeroes; // makes no difference
-    // clearBuffer(w);
-    for (w) |*d| { *d = 0 };
+    clearBuffer(w);
+    //for (w) |*d| { *d = 0 };
     var last_block_bytes = i32(0);
     while (last_block_bytes < end_current_block) {
         var value = u32(src[usize(last_block_bytes + current_block)])
@@ -249,14 +246,14 @@ fn computeInternal(src: []const u8, sz: usize, result: Sha1Digest) -> %void {
     }}
 }
 
-#static_eval_enable(want_static_eval)
-pub fn sha1(src: []u8, sz: usize, h: Sha1Digest) -> %void {
+//#static_eval_enable(want_static_eval)
+pub fn sha1(src: []u8, sz: usize, h: [Sha1DigestSize]Sha1Digest) -> %void {
     computeInternal(src, sz, h)
 }
 
 const HexChars = "0123456789abcdef";
-#static_eval_enable(want_static_eval)
-pub fn hexdigest(h: Sha1Digest, dest: []u8) {
+//#static_eval_enable(want_static_eval)
+pub fn hexdigest(h: [Sha1DigestSize]Sha1Digest, dest: []u8) {
     for (h) |v, i| {
         dest[i << 1] = HexChars[(v & 0xf0) >> 4];
         dest[(i << 1) + 1] = HexChars[v & 0xf];
