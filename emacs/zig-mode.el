@@ -1,7 +1,7 @@
 ;; zig-mode - minimal
 (setq zig-keywords '("break" "else" "for" "if" "return" "while" "const" "var"
 		     "pub" "fn" "extern"))
-(setq zig-types '("u8" "u16" "u32" "u64" "usize" "i8" "i16" "i32" "i64" "isize"))
+(setq zig-types '("void" "bool" "u8" "u16" "u32" "u64" "usize" "i8" "i16" "i32" "i64" "isize"))
 (setq zig-builtins '("attribute" "#static_eval_enable" "@compileVar" "@import" "@embedFile"
 		    "@divExact" "@fence" "@truncate"))
 
