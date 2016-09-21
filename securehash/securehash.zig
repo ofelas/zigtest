@@ -39,16 +39,18 @@
 const io = @import("std").io;
 const debug = @import("std").debug;
 
-pub const Sha1DigestSize = 20;
 pub const Sha1Digest = u8;
+const Sha1BitCount = 160;
+pub const Sha1DigestSize = Sha1BitCount/Sha1Digest.bit_count; // 20
+pub const Sha1HexDigestSize = (Sha1DigestSize * 2) + 1;       // 40 + 1 for termination
 
-const Sha1StateSize = 5;
 const Sha1State = u32;
+const Sha1StateSize = Sha1BitCount/Sha1State.bit_count; // 5
 
-const Sha1BufferSize = 80;
 const Sha1Buffer = u32;
+const Sha1BufferSize = Sha1BitCount/2; // 80
 
-// [5]u32 -> TODO array container init
+// [5]u32 -> TODO array container initState
 const INIT_STATE = []u32{
     0x67452301,
     0xefcdab89,
@@ -63,7 +65,7 @@ fn clearBuffer(cb: []Sha1Buffer) {
 }
 
 //#static_eval_enable(!want_static_eval)
-fn init(res: []Sha1State) {
+fn initState(res: []Sha1State) {
     res[0] = u32(0x67452301);
     res[1] = u32(0xefcdab89);
     res[2] = u32(0x98badcfe);
@@ -195,7 +197,7 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
     var end_current_block = i32(0);
     var current_block = i32(0);
 
-    init(state);
+    initState(state);
     // for (state) |*d, i| { *d = INIT_STATE[i]; }
     clearBuffer(w);
     //for (w) |*d| { *d = 0 }; // clearBuffer() alternative
@@ -228,8 +230,7 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
         w[usize(last_block_bytes >> 2)] |= value;
         last_block_bytes += 1;
     }
-    w[usize(last_block_bytes >> 2)] = w[usize(last_block_bytes >> 2)]
-                                    | u32(0x80) <<% align(u32, last_block_bytes, 4);
+    w[usize(last_block_bytes >> 2)] |= u32(0x80) <<% align(u32, last_block_bytes, 4);
                                     // ((3 - (u32(last_block_bytes) & 3)) <<% 3);
 
     if (end_current_block >= 56) {
@@ -247,7 +248,7 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
 }
 
 //#static_eval_enable(want_static_eval)
-pub fn sha1(src: []u8, sz: usize, h: [Sha1DigestSize]Sha1Digest) -> %void {
+pub fn sha1(src: []const u8, sz: usize, h: [Sha1DigestSize]Sha1Digest) -> %void {
     computeInternal(src, sz, h)
 }
 
@@ -257,5 +258,107 @@ pub fn hexdigest(h: [Sha1DigestSize]Sha1Digest, dest: []u8) {
     for (h) |v, i| {
         dest[i << 1] = HexChars[(v & 0xf0) >> 4];
         dest[(i << 1) + 1] = HexChars[v & 0xf];
+    }
+}
+
+
+/// Sha1Context
+pub struct Sha1Context {
+    byteoffset: usize,           // current buffer offset
+    blockoffset: usize,          // current block offset
+    consumed: usize,             // total amount of bytes processed
+    state: [Sha1StateSize]u32,   // state
+    buffer: [80]u32,             // working area
+    charbuf: [64]u8,             // we keep incomplete bytes/blocks here
+
+    /// use this first to initialize the context
+    pub fn init(ctx: &Sha1Context) {
+        ctx.byteoffset = 0;
+        ctx.blockoffset = 0;
+        ctx.consumed = 0;
+        initState(ctx.state);
+        clearBuffer(ctx.buffer)
+    }
+
+    /// incrementally feed it data
+    pub fn update(ctx: &Sha1Context, src: []u8, bytecount: usize) {
+        // fill the buffer, do the transform/innerHash for every block (64 bytes)
+        // we have ctx.bytecount and get bytecount more
+        // how many blocks will there be? (1 << 6) is 64
+        ctx.consumed +%= bytecount;
+        var srcidx = usize(0);
+        var blocks = (ctx.byteoffset + bytecount) >> 6;
+        // now a rethink; getting 1 byte at a time will eventually trigger blocks
+        // but we did not get that much in one go
+        if (blocks > 0) {
+            // copy to charbuf
+            var cidx = ctx.byteoffset;
+            while(cidx < 64; {cidx += 1; srcidx += 1;}) {
+                ctx.charbuf[cidx] = src[srcidx];
+            }
+            cidx = 0;
+            while (cidx < 64; cidx += 1) {
+                ctx.buffer[cidx >> 2] |= u32(ctx.charbuf[cidx]) << u32((3 - (cidx & 3)) <<% 3);
+            }
+            blocks -= 1;
+            ctx.byteoffset = 0;
+            %%innerHash(ctx.state, ctx.buffer);
+            var current_block = usize(0);
+            while (current_block < blocks) {
+                const end_current_block = srcidx + 64;
+                var i = usize(0);
+                while (srcidx < end_current_block) {
+                    ctx.buffer[i] = u32(src[srcidx + 3])
+                        | u32(src[srcidx + 2]) <<% 8
+                        | u32(src[srcidx + 1]) <<% 16
+                        | u32(src[srcidx]) <<% 24;
+                    srcidx +%= 4;
+                    ctx.byteoffset +%= 4;
+                    i += 1;
+                }
+                current_block +%= 1;
+                %%innerHash(ctx.state, ctx.buffer);
+                // ok, start over
+                ctx.byteoffset = 0;
+            }
+        }
+        // any bytes left goes to the charbuf...
+        while (srcidx < bytecount; {srcidx += 1; ctx.byteoffset += 1;}) {
+            // refill the charbuf from src...
+            ctx.charbuf[ctx.byteoffset] = src[srcidx];
+        }
+
+    }
+
+    /// and finally end it
+    pub fn final(ctx: &Sha1Context, digest: []u8) {
+        // do the final step, if there is anything left...
+        var origsize = ctx.byteoffset;
+        clearBuffer(ctx.buffer);
+        // %%io.stdout.printInt(@typeOf(origsize), (64 - origsize)); %%io.stdout.printf(" final refill\n");
+        ctx.charbuf[ctx.byteoffset] = 0x80;
+        ctx.byteoffset +%= 1;
+        var cidx = usize(0);
+        while (cidx < ctx.byteoffset; cidx += 1) {
+            ctx.buffer[cidx >> 2] |= u32(ctx.charbuf[cidx]) << u32((3 - (cidx & 3)) <<% 3);
+        }
+
+        if (origsize >= 56) {
+            // TODO: remains to be tested
+            %%innerHash(ctx.state, ctx.buffer);
+            clearBuffer(ctx.buffer);
+        }
+
+        ctx.buffer[15] = u32(ctx.consumed <<% 3);
+
+        %%innerHash(ctx.state, ctx.buffer);
+
+        { var z = usize(0);
+            while (z < Sha1DigestSize; z +%= 1) {
+                digest[z] = u8(((ctx.state[z >> 2]) >> ((3-(z & 3)) <<% 3)) & 0xff);
+            }
+        }
+        // is it a safety measure to clear the data?
+        ctx.init(); // %%innerHash(ctx.state, ctx.buffer);
     }
 }
