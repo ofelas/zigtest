@@ -16,3 +16,6 @@ See also [dtoa-benchmark](https://github.com/miloyip/dtoa-benchmark)
 
 ## stringalgo
 Various string algorithms suitable to test Zig in various ways.
+
+## json
+Trying to parse JSON

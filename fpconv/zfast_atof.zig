@@ -24,10 +24,11 @@ pub fn zatod(p: []const u8) -> %f64 {
     var value: f64 = 0.0;
     var scale: f64 = 1.0;
     var idx: usize = 0;
+    const end = p.len;
 
     // Skip leading white space, if any.
-    while (white_space(p[idx]); idx += 1 ) {}
-    if (p[idx] == 0) return value; // or possibly an error
+    while ((idx < end) && white_space(p[idx]); idx += 1 ) {}
+    if ((idx == end) || (p[idx] == 0)) return value; // or possibly an error
 
     // Get sign, if any.
     if (p[idx] == '-') {
@@ -38,7 +39,7 @@ pub fn zatod(p: []const u8) -> %f64 {
     }
 
     // Get digits before decimal point or exponent, if any.
-    while (valid_digit(p[idx]); idx += 1) {
+    while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
        value = value * 10.0 + f64(p[idx] - '0');
     }
 
@@ -46,36 +47,40 @@ pub fn zatod(p: []const u8) -> %f64 {
     if (p[idx] == '.') {
         var pow10: f64 = 10.0;
         idx += 1;
-        while (valid_digit(p[idx]); idx += 1) {
+        while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
             value += f64(p[idx] - '0') / pow10;
             pow10 *= 10.0;
         }
     }
 
-    // Handle exponent, if any.
-    if ((p[idx] == 'e') || (p[idx] == 'E')) {
-        var expon: u64 = 0;
+    if (idx < end) {
+        // Handle exponent, if any.
+        if ((p[idx] == 'e') || (p[idx] == 'E')) {
+            var expon: u64 = 0;
 
-        // Get sign of exponent, if any.
-        idx += 1;
-        if (p[idx] == '-') {
-            frac = 1;
+            // Get sign of exponent, if any.
             idx += 1;
+            if (idx < end) {
+                if (p[idx] == '-') {
+                    frac = 1;
+                    idx += 1;
 
-        } else if (p[idx] == '+') {
-            idx += 1;
+                } else if (p[idx] == '+') {
+                    idx += 1;
+                }
+
+                // Get digits of exponent, if any.
+                while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
+                    expon = expon * 10 + @typeOf(expon)(p[idx] - '0');
+                }
+            }
+            if (expon > 308) expon = 308;
+
+            // Calculate scaling factor.
+            while (expon >= 50) { scale *= 1E50; expon -= 50; }
+            while (expon >=  8) { scale *= 1E8;  expon -=  8; }
+            while (expon >   0) { scale *= 10.0; expon -=  1; }
         }
-
-        // Get digits of exponent, if any.
-        while (valid_digit(p[idx]); idx += 1) {
-            expon = expon * 10 + @typeOf(expon)(p[idx] - '0');
-        }
-        if (expon > 308) expon = 308;
-
-        // Calculate scaling factor.
-        while (expon >= 50) { scale *= 1E50; expon -= 50; }
-        while (expon >=  8) { scale *= 1E8;  expon -=  8; }
-        while (expon >   0) { scale *= 10.0; expon -=  1; }
     }
 
     // Return signed and scaled floating point result.

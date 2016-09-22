@@ -1,0 +1,47 @@
+[
+  {
+    "_id": "57d060114a08b9d5f63cc0c0",
+    "index": 0,
+    "guid": "7e115921-a2aa-47f6-b4c3-ab3ec73f5f58",
+    "isActive": false,
+    "balance": "$2,152.99",
+    "picture": "http://placehold.it/32x32",
+    "age": 32,
+    "eyeColor": "green",
+    "name": "Camacho Hopkins",
+    "gender": "male",
+    "company": "BLEEKO",
+    "email": "camachohopkins@bleeko.com",
+    "phone": "+1 (886) 583-2312",
+    "address": "673 Prospect Place, Warren, Arizona, 1100",
+    "about": "Sunt eu amet tempor ullamco proident pariatur est irure ex. Consectetur culpa aute incididunt occaecat Lorem velit labore nostrud eu aute officia minim occaecat. Laborum pariatur ullamco nulla Lorem aliqua culpa qui est eiusmod ex deserunt. Do exercitation occaecat adipisicing nulla officia non culpa pariatur amet duis dolor. Magna fugiat sunt anim velit aliqua laborum.\r\n",
+    "registered": "2014-10-24T10:00:53 -02:00",
+    "latitude": 74.484655,
+    "longitude": -171.553099,
+    "tags": [
+      "minim",
+      "enim",
+      "duis",
+      "id",
+      "anim",
+      "eu",
+      "elit"
+    ],
+    "friends": [
+      {
+        "id": 0,
+        "name": "Earline Francis"
+      },
+      {
+        "id": 1,
+        "name": "Deloris Burke"
+      },
+      {
+        "id": 2,
+        "name": "Velma Jimenez"
+      }
+    ],
+    "greeting": "Hello, Camacho Hopkins! You have 9 unread messages.",
+    "favoriteFruit": "strawberry"
+  }
+]
