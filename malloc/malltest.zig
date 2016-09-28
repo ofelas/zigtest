@@ -12,11 +12,13 @@ const assert = debug.assert;
 const str = std.str;
 const list = std.list;
 const printer = @import("printer.zig");
+const liballoc = @import("liballoc.zig");
 
 enum MallocKind {
     STD,
     JOKER,
     JEMALLOC,
+    LIBALLOC,
 }
 
 var mallocator_kind = MallocKind.STD;
@@ -170,6 +172,15 @@ fn localAlloc(self: &mem.Allocator, n: usize) -> %[]u8 {
             }
             return error.NoMem;
         },
+        LIBALLOC => {
+            if (var v ?= liballoc.malloc(n)) {
+                var rv: []u8 = undefined;
+                rv.ptr = (&u8)(v);
+                rv.len = n;
+                return rv;
+            }
+            return error.NoMem;
+        },
     }
 }
 
@@ -195,6 +206,16 @@ fn localRealloc(self: &mem.Allocator, old_mem: []u8, new_size: usize) -> %[]u8 {
             }
             return error.NoMem;
         },
+        LIBALLOC => {
+            const v = liballoc.realloc(old_mem.ptr, new_size);
+            if (const vv ?= v) {
+                var rv: []u8 = undefined;
+                rv.ptr = (vv);
+                rv.len = new_size;
+                return rv;
+            }
+            return error.NoMem;
+        },
     }
 }
 
@@ -203,6 +224,7 @@ fn localFree(self: &mem.Allocator, old_mem: []u8) {
         STD   => {},
         JOKER => return joker.free(old_mem),
         JEMALLOC => free((&c_void)(old_mem.ptr)),
+        LIBALLOC => liballoc.free((&u8)(old_mem.ptr)),
     }
 }
 
@@ -243,6 +265,10 @@ pub fn main(args: [][] u8) -> %void {
             mallocator_kind = MallocKind.JEMALLOC;
             %%io.stdout.printf(args[1]);
             %%io.stdout.printf("\n");
+        } else if (str.eql("liballoc", args[1])) {
+            mallocator_kind = MallocKind.LIBALLOC;
+            %%io.stdout.printf(args[1]);
+            %%io.stdout.printf("\n");
         } else {
             mallocator_kind = MallocKind.STD;
             %%io.stdout.printf("standard\n");
@@ -278,4 +304,10 @@ pub fn main(args: [][] u8) -> %void {
         %%joker.print(io.stdout);
         %%joker.deinit();
     }
+
+    %%io.stdout.printf("false:");
+    %%io.stdout.printInt(usize, usize(false));
+    %%io.stdout.printf(", true:");
+    %%io.stdout.printInt(usize, usize(true));
+    %%io.stdout.printf("\n");
 }

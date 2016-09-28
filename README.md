@@ -20,8 +20,10 @@ Various string algorithms suitable to test Zig in various ways.
 ## json
 Trying to parse JSON
 
-## jemalloc
+## malloc
 Playing with various memory allocators on Linux.
+
+See also [liballoc](https://github.com/blanham/liballoc.git) translated to Zig.
 
 See also [webos jemalloc](https://github.com/openwebos/jemalloc).
 Original jemalloc by Jason Evans/FreeBSD.

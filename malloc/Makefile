@@ -26,6 +26,7 @@ test: malltest Makefile
 	./malltest
 	./malltest joker
 	./malltest jemalloc
+	./malltest liballoc
 	./malltest does_not_exist
 
 .PHONY:
