@@ -1,12 +1,14 @@
 ;; zig-mode - minimal
 (setq zig-keywords '("break" "else" "for" "if" "return" "while" "const" "var" "use"
-		     "pub" "fn" "extern" "continue" "inline" "export" "type" "switch"))
+		     "pub" "fn" "extern" "continue" "inline" "export" "type" "switch"
+		     "coldcc" "nakedcc"))
 (setq zig-types '("T" "K" "V" "struct" "enum" "union" "void" "bool"
 		  "u8" "u16" "u32" "u64" "usize"
 		  "i8" "i16" "i32" "i64" "isize"
 		  "f32" "f64"))
 (setq zig-builtins '("attribute" "#static_eval_enable" "@compileVar" "@import" "@embedFile"
-		    "@divExact" "@fence" "@truncate" "@typeOf" "@sizeOf"))
+		     "@divExact" "@fence" "@truncate" "@typeOf" "@sizeOf"
+		     "@setFnTest" "@setFnStaticEval" "@setFnNoInline" "@setDebugSafety"))
 (setq zig-constants '("null" "true" "false"))
 
 (setq zig-keyword-regexp (regexp-opt zig-keywords 'words))
