@@ -61,19 +61,22 @@ var USE_CASE5 = true;
 //     *((ALIGN_TYPE*)((uintptr_t)ptr - ALIGN_INFO)) =                     \
 //       diff + ALIGN_INFO;                                                \
 //   }
-fn ALIGN(ptr: &u8) -> &u8 {
+inline fn ALIGN(ptr: &u8) -> &u8 {
+    var p = usize(ptr);
     if (ALIGNMENT > 1) {
-        var p = usize(ptr) + ALIGN_INFO;
-        var diff = usize(ptr) & (ALIGNMENT - 1);
+        p += ALIGN_INFO;
+        var diff = p & (ALIGNMENT - 1);
+        // if (@compileVar("is_test")) {
+        //     %%printNamedHex("diff = ", diff, io.stderr);
+        // }
         if (diff != 0) {
             diff = ALIGNMENT - diff;
             p += diff;
         }
         // write alignment info
         *(&ALIGN_TYPE)(p - ALIGN_INFO) = (ALIGN_TYPE)(diff + ALIGN_INFO);
-        return (&u8)(p);
     }
-    return ptr;
+    return (&u8)(p);
 }
 
 // #define UNALIGN( ptr )                                                  \
@@ -85,7 +88,7 @@ fn ALIGN(ptr: &u8) -> &u8 {
 //       ptr = (void*)((uintptr_t)ptr - diff);                             \
 //     }                                                                   \
 //   }
-fn UNALIGN(ptr: &u8) -> &u8 {
+inline fn UNALIGN(ptr: &u8) -> &u8 {
     if (ALIGNMENT > 1) {
         const diff = *(&ALIGN_TYPE)(usize(ptr) - ALIGN_INFO);
         if (diff < (ALIGNMENT + ALIGN_INFO)) {
@@ -108,10 +111,10 @@ fn UNALIGN(ptr: &u8) -> &u8 {
 struct liballoc_major {
     prev: &liballoc_major,            /// Linked list information.
     next: &liballoc_major,            /// Linked list information.
+    first: &liballoc_minor,           /// A pointer to the first allocated memory in the block.      
     pages: usize,                     /// The number of pages in the block.
     size: usize,                      /// The number of pages in the block.
     usage: usize,                     /// The number of bytes used in the block.
-    first: &liballoc_minor,           /// A pointer to the first allocated memory in the block.      
 }
 
 /// This is a structure found at the beginning of all sections in a
@@ -135,7 +138,7 @@ fn getpagesize() -> usize {
 }
 
 const l_pageSize  = getpagesize();      ///< The size of an individual page. Set up in liballoc_init.
-const l_pageCount = 16;        ///< The number of pages to request per chunk. Set up in liballoc_init.
+const l_pageCount = 32;        ///< The number of pages to request per chunk. Set up in liballoc_init.
 
 var l_allocated = usize(0);    ///< Running total of allocated memory.
 var l_inuse     = usize(0);    ///< Running total of used memory.
@@ -207,19 +210,18 @@ fn liballoc_dump() -> %void {
     %%printNamedHex("liballoc: Warning count: ", l_warningCount, io.stdout);
     %%printNamedHex("liballoc: Error count: ", l_errorCount, io.stdout);
     %%printNamedHex("liballoc: Possible overruns: ", l_possibleOverruns, io.stdout);
-    if (var maj ?= l_memRoot) {
-        while (usize(maj) != usize(0)) {
-            %%printNamedHex("maj ptr  : ", usize(maj), io.stdout);
-            %%printNamedHex("maj size : ", maj.size, io.stdout);
-            %%printNamedHex("maj usage: ", maj.usage, io.stdout);
-            var min = maj.first;
-            while (usize(min) != usize(0)) {
-                %%printNamedHex("  min ptr  : ", usize(min), io.stdout);
-                %%printNamedHex("  min size : ", min.size, io.stdout);
-                min = min.next;
-            }
-            maj = maj.next;
+    var maj = l_memRoot ?? return;
+    while (usize(maj) != usize(0)) {
+        %%printNamedHex("maj ptr  : ", usize(maj), io.stdout);
+        %%printNamedHex("maj size : ", maj.size, io.stdout);
+        %%printNamedHex("maj usage: ", maj.usage, io.stdout);
+        var min = maj.first;
+        while (usize(min) != usize(0)) {
+            %%printNamedHex("  min ptr  : ", usize(min), io.stdout);
+            %%printNamedHex("  min size : ", min.size, io.stdout);
+            min = min.next;
         }
+        maj = maj.next;
     }
 }
 
@@ -242,6 +244,7 @@ fn liballoc_alloc(pages: usize) -> ?&u8 {
 }
 
 fn liballoc_free(mm: ?&liballoc_major) {
+    
     if (const m ?= mm) {
         const r = system.munmap((&u8)(m), m.pages * l_pageSize);
         if (DEBUG) {
@@ -825,7 +828,8 @@ pub fn realloc(pp: ?&u8, size: usize) -> ?&u8 {
         liballoc_unlock();
 
         if (DEBUG) {
-            %%io.stderr.printf("reallocating with alloc\n");
+            %%io.stderr.printf("reallocating with alloc");
+            %%printNamedHex(" address ", usize(@returnAddress()), io.stderr);
         }
 
         // If we got here then we're reallocating to a block bigger than us.
@@ -838,6 +842,32 @@ pub fn realloc(pp: ?&u8, size: usize) -> ?&u8 {
         return np;
     } else {
         return malloc(size);
+    }
+}
+
+
+fn alignandunalignTest() {
+    @setFnTest(this, true);
+    var it = usize(0);
+    var tt = usize(0);
+    var buf: [64]u8 = zeroes;
+
+    while (tt < 32; tt += 1) {
+        var op = &buf[tt];
+        // %%io.stdout.printInt(usize, tt);
+        // %%io.stdout.writeByte('\n');
+        // %%printNamedHex("-> op (base) = ", usize(op), io.stdout);
+        var p = ALIGN(op);
+        // %%printNamedHex("p (aligned) = ", usize(p), io.stdout);
+        // it = 0;
+        // while (it < buf.len; it += 1) {
+        //     %%io.stdout.printInt(u8, buf[it]);
+        //     %%io.stdout.writeByte('.');
+        // } %%io.stdout.printf("\n");
+        p = UNALIGN(p);
+        // %%printNamedHex("<- p (unaligned) = ", usize(p), io.stdout);
+        debug.assert(op == p);
+        buf = zeroes;
     }
 }
 
@@ -917,7 +947,7 @@ fn testAllocFree() {
 fn testMallocReallocFree() {
     @setFnTest(this, true);
     %%liballoc_dump();
-    var m = malloc(1 << 20);
+    var m = malloc(4 << 10);
     %%liballoc_dump();
     if (var mm ?= m) {
         var np = realloc(mm, 2 << 10);
@@ -929,3 +959,4 @@ fn testMallocReallocFree() {
     }
     %%liballoc_dump();
 }
+
