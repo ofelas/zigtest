@@ -1,4 +1,18 @@
 // -*- indent-tabs-mode: nil; -*-
+const std = @import("std");
+const io = std.io;
+
+pub fn printNamedHex(name: []u8, value: var, stream: io.OutStream) -> %void {
+    %%stream.write(name);
+    %%stream.printInt(@typeOf(value), value);
+    %%stream.write("/0x");
+    var buf: [64]u8 = undefined;
+    const sz = hexPrintInt(@typeOf(value), buf, value);
+    %%stream.write(buf[0 ... sz - 1]);
+    %%stream.printf("\n");
+}
+
+
 pub fn hexPrintInt(inline T: type, out_buf: []u8, x: T) -> usize {
     if (T.is_signed) hexPrintSigned(T, out_buf, x) else hexPrintUnsigned(T, out_buf, x)
 }

@@ -4,16 +4,7 @@ const io = std.io;
 const rb = @import("redblack.zig");
 
 const prt = @import("printer.zig");
-
-fn printNamedHex(name: []u8, value: var, stream: io.OutStream) -> %void {
-    %%stream.write(name);
-    %%stream.printInt(@typeOf(value), value);
-    %%stream.write("/0x");
-    var buf: [64]u8 = undefined;
-    const sz = prt.hexPrintInt(@typeOf(value), buf, value);
-    %%stream.write(buf[0 ... sz - 1]);
-    %%stream.printf("\n");
-}
+const printNamedHex = prt.printNamedHex;
 
 // Tree of extents
 // typedef struct extent_node_s extent_node_t;
@@ -84,7 +75,7 @@ fn testMe() {
     const stream = std.io.stdout;
     const assert = std.debug.assert;
     // a bit optimistic
-    var x: [250000]example_node = zeroes;
+    var x: [10000]example_node = zeroes;
     // In [3]: math.log(250000, 2)
     // Out[3]: 17.931568569324174
 
@@ -108,6 +99,8 @@ fn testMe() {
         } else {
             x[it].example = usize(@maxValue(isize)) + it;
         }
+        // add them in sequence (ascending or decending) or else it fails, spot the bug..
+        x[it].example = (x.len - it);
         t.insert(&x[it]);
         if (var tn ?= t.search(&x[it])) {
             //%%stream.printf("potential match\n");
@@ -128,4 +121,33 @@ fn testMe() {
     %%stream.write("black_height:");
     %%stream.printInt(usize, sz);
     %%stream.printf("\n");
+
+    // Now try to remove the nodes
+    it = usize(0);
+    while (it < upper; it += 1) {
+        var ii = it + usize(1);
+        //%%t.rbt_root.dump(0, 'T');
+        %%printNamedHex("Removing node: ", usize(&x[it]), io.stdout);
+        var rn = t.search(&x[it]) ?? {
+            (&example_node)(usize(0))
+        };
+        %%printNamedHex("Searched node: ", usize(rn), io.stdout);
+        //@fence();
+        %%io.stdout.printf("\n");
+        assert(rn == &x[it]);
+        assert(!t.empty());
+        t.remove(&x[it]);
+        //%%t.rbt_root.dump(0, 'T');
+        //var rn = ??t.search(&x[it]);
+        while (ii < upper; ii += 1) {
+            rn = ??t.search(&x[ii]);
+            assert(rn == &x[ii]);
+        }
+    }
+    sz = t.black_height();
+    %%stream.write("black_height:");
+    %%stream.printInt(usize, sz);
+    %%stream.printf("\n");
+    %%t.rbt_root.dump(0, 'T');
+    assert(t.empty());
 }

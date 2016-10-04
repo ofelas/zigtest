@@ -57,6 +57,9 @@ const std = @import("std");
 const io = std.io;
 const assert = std.debug.assert;
 
+const prt = @import("printer.zig");
+const printNamedHex = prt.printNamedHex;
+
 const RIGHT_SET_MASK = usize(1);
 const RIGHT_GET_MASK = usize(isize(-2));
 
@@ -123,9 +126,10 @@ pub struct rb_node(inline T: type)
         return it;
     }
 
-    pub inline fn init(n: &Self, nilnode: T) {
-        n.left_set(nilnode);
-        n.right_set(nilnode);
+    pub inline fn init(n: &Self) {
+        assert(usize(n) & 0x1 == 0);
+        n.left_set((T)(usize(0)));
+        n.right_set((T)(usize(0)));
         n.red_set();
     }
 }
@@ -142,22 +146,6 @@ pub inline fn rotate_left(n: var) -> @typeOf(n) {
     rn.link.left_set(n);
 
     return rn;
-}
-
-// #define rbp_lean_left(a_type, a_field, a_node, r_node) do {		\
-//     bool rbp_ll_red;                                                 \
-//     rbp_rotate_left(a_type, a_field, (a_node), (r_node));            \
-//     rbp_ll_red = rbp_red_get(a_type, a_field, (a_node));		\
-//     rbp_color_set(a_type, a_field, (r_node), rbp_ll_red);            \
-//     rbp_red_set(a_type, a_field, (a_node));                          \
-// } while (0)
-pub inline fn lean_left(n: var, rnode: var) -> @typeOf(rnode) {
-    // %%io.stdout.printf("lean_left\n");
-    var rr = rotate_left(n, rnode);
-    rr.link.color_set(n.link.red_get());
-    n.link.red_set();
-
-    return rr;
 }
 
 // #define rbp_rotate_right(a_type, a_field, a_node, r_node) do {       \
@@ -228,10 +216,14 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         t.rbt_root = NULL_PTR(t.rbt_root);
     }
 
+    pub inline fn empty(t: &Self) -> bool {
+        if (t.rbt_root == (&T)(usize(0))) true else false
+    }
+
     pub fn insert(t: &Self, n: &T) {
         const NULL = NULL_PTR(n);
         var path: [@sizeOf(usize) << 4]path_node = zeroes;
-        n.link.init(NULL);
+        n.link.init();
         // Wind
         path[0].node = t.rbt_root;
         var ix = usize(0);
@@ -323,6 +315,449 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
                 break;
             }
         }
-        return (ret);
+        return ret;
+    }
+
+    pub fn nsearch(t: &Self, key: &T) -> ?&T {
+        const NULL = (&T)(usize(0));
+        var ret = NULL;
+        var tnode = t.rbt_root;
+        while (tnode != NULL) {
+            const cmp = eql(key, tnode);
+            if (cmp < 0) {
+                ret = tnode;
+                tnode = tnode.link.left_get();
+            } else if (cmp > 0) {
+                tnode = tnode.link.right_get();
+            } else {
+                ret = tnode;
+                break;
+            }
+        }
+        return ret;
+    }
+
+    pub fn psearch(t: &Self, key: &T) -> ?&T {
+        const NULL = (&T)(usize(0));
+        var ret = NULL;
+        var tnode = t.rbt_root;
+        while (tnode != NULL) {
+            const cmp = eql(key, tnode);
+            if (cmp < 0) {
+                tnode = tnode.link.left_get();
+            } else if (cmp > 0) {
+                ret = tnode;
+                tnode = tnode.link.right_get();
+            } else {
+                ret = tnode;
+                break;
+            }
+        }
+        return ret;
+    }
+
+    pub fn remove(t: &Self, node: &T) {
+        const NULL = (&T)(usize(0));
+        var path: [@sizeOf(usize) << 4]path_node = zeroes; // this should set all to zero/null
+        var nodep = (&path_node)(usize(0));
+        var pathp = &path[0];
+        // *pathp, *nodep
+        // Wind.
+        //nodep = NULL; Silence compiler warning.
+        var ix = usize(0);
+        var nix = usize(0);
+        if (t.rbt_root == NULL) return; // we get the root messed up...
+        path[ix].node = t.rbt_root;
+        // for (pathp = path; pathp->node != NULL; pathp++)
+        while ((ix < (path.len - 1)) && (path[ix].node != NULL)) {
+            const cmp = eql(node, path[ix].node);
+            path[ix].cmp = cmp;
+            if (cmp < 0) {
+                path[ix + 1].node = path[ix].node.link.left_get();
+            } else {
+                path[ix + 1].node = path[ix].node.link.right_get();
+                if (cmp == 0) {
+                    // Find node's successor, in preparation for swap.
+                    path[ix].cmp = 1;
+                    nodep = &path[ix];
+                    nix = ix;
+                    ix += 1;
+                    // for (pathp++; pathp->node != NULL; pathp++)
+                    while ((path[ix].node != NULL) && (ix < (path.len - 1))) {
+                        path[ix].cmp = -1;
+                        path[ix + 1].node = path[ix].node.link.left_get();
+                        ix += 1;
+                        pathp = &path[ix];
+                    }
+                    break;
+                }
+            }
+            ix += 1;
+            pathp = &path[ix];
+        }
+        // %%printNamedHex("path.len=", usize(path.len), io.stdout);
+        %%printNamedHex("ix=", ix, io.stdout);
+        %%printNamedHex("nodep=", usize(nodep), io.stdout);
+        %%printNamedHex("path=", usize(&path[0]), io.stdout);
+        // %%printNamedHex("nodep.node=", usize(nodep.node), io.stdout);
+        %%printNamedHex("node=", usize(node), io.stdout);
+
+        // it must have been found
+        assert(nodep.node == node);
+        // pathp--;
+        ix -%= 1;
+        %%printNamedHex("ix=", ix, io.stdout);
+        if (path[ix].node != node) {
+            %%io.stdout.printf("path[ix].node != node\n");
+            // Swap node with its successor.
+            //     bool tred = rbtn_red_get(a_type, a_field, pathp->node);
+            const tred = path[ix].node.link.red_get();
+            //     rbtn_color_set(a_type, a_field, pathp->node, rbtn_red_get(a_type, a_field, node));
+            //     rbtn_left_set(a_type, a_field, pathp->node, rbtn_left_get(a_type, a_field, node));
+            path[ix].node.link.color_set(node.link.red_get());
+            path[ix].node.link.left_set(node.link.left_get());
+            // If node's successor is its right child, the following code
+            // will do the wrong thing for the right child pointer.
+            // However, it doesn't matter, because the pointer will be
+            // properly set when the successor is pruned.
+            //     rbtn_right_set(a_type, a_field, pathp->node, rbtn_right_get(a_type, a_field, node));
+            //     rbtn_color_set(a_type, a_field, node, tred);
+            path[ix].node.link.right_set(node.link.right_get());
+            node.link.color_set(tred);
+            // The pruned leaf node's child pointers are never accessed
+            // again, so don't bother setting them to nil.
+            //     nodep->node = pathp->node;
+            //     pathp->node = node;
+            nodep.node = path[ix].node;
+            nix = ix;
+            path[ix].node = node;
+            if (nodep == &path[ix]) {
+                %%io.stdout.printf("nodep == &path[ix]\n");
+                t.rbt_root = nodep.node;
+            } else {
+                // need to track index of nodep
+                if (path[nix - 1].cmp < 0) {
+                    // rbtn_left_set(a_type, a_field, nodep[-1].node, nodep.node);
+                    path[nix - 1].node.link.left_set(nodep.node);
+                } else {
+                    // rbtn_right_set(a_type, a_field, nodep[-1].node, nodep.node);
+                    path[nix - 1].node.link.right_set(nodep.node);
+                }
+            }
+        } else {
+            %%io.stdout.printf("path[ix].node == node\n");
+            //     a_type *left = rbtn_left_get(a_type, a_field, node);
+            var left = node.link.left_get();
+            if (left != NULL) {
+                // node has no successor, but it has a left child.
+                // Splice node out, without losing the left child.
+                //         assert(!rbtn_red_get(a_type, a_field, node));
+                //         assert(rbtn_red_get(a_type, a_field, left));
+                assert(!node.link.red_get());
+                assert(left.link.red_get());
+                left.link.black_set();
+                if (ix == 0) {
+                    t.rbt_root = left;
+                } else {
+                    if (path[ix - 1].cmp < 0) {
+                        path[ix - 1].node.link.left_set(left);
+                    } else {
+                        path[ix - 1].node.link.right_set(left);
+                    }
+                }
+                return;
+            } else if (ix == 0) {
+                // The tree only contained one node.
+                t.rbt_root = NULL;
+                return;
+            }
+        }
+        if (path[ix].node.link.red_get()) {
+            // Prune red node, which requires no fixup.
+            %%io.stdout.printf("Prune red node, which requires no fixup\n");
+            assert(path[ix - 1].cmp < 0);
+            path[ix - 1].node.link.left_set(NULL);
+            return;
+        }
+        // The node to be pruned is black, so unwind until balance is
+        // restored.
+        path[ix].node = NULL;
+        ix -%= 1;
+        // for (pathp--; (uintptr_t)pathp >= (uintptr_t)path; pathp--) {
+        while ((ix >= 0) && (ix < (path.len - 1)) && (path[ix].node != NULL); ix -%= 1) {
+            assert(path[ix].cmp != 0);
+            if (path[ix].cmp < 0) {
+                // rbtn_left_set(a_type, a_field, pathp->node, pathp[1].node);
+                path[ix].node.link.left_set(path[ix + 1].node);
+                if (path[ix].node.link.red_get()) {
+                    // a_type *right = rbtn_right_get(a_type, a_field, pathp->node);
+                    // a_type *rightleft = rbtn_left_get(a_type, a_field,  right);
+                    // a_type *tnode;
+                    var right = path[ix].node;
+                    var rightleft = right.link.left_get();
+                    var tnode = NULL;
+                    if ((rightleft != NULL) && rightleft.link.red_get()) {
+                        // In the following diagrams, ||, //, and \
+                        // indicate the path to the removed node.
+                        //
+                        //      ||
+                        //    pathp(r)
+                        //  //       \
+                        // (b)        (b)
+                        //           /
+                        //          (r)
+                        //
+                        // rbtn_black_set(a_type, a_field, pathp->node);
+                        // rbtn_rotate_right(a_type, a_field, right, tnode);
+                        // rbtn_right_set(a_type, a_field, pathp->node, tnode);
+                        // rbtn_rotate_left(a_type, a_field, pathp->node, tnode);
+                        path[ix].node.link.black_set();
+                        tnode = rotate_right(right);
+                        path[ix].node.link.right_set(tnode);
+                        tnode = rotate_left(path[ix].node);
+                    } else {
+                        //      ||
+                        //    pathp(r)
+                        //  //        \
+                        // (b)        (b)
+                        //           /
+                        //          (b)
+                        //
+                        // rbtn_rotate_left(a_type, a_field, pathp->node, tnode);
+                        tnode = rotate_left(path[ix].node);
+                    }
+                    // Balance restored, but rotation modified subtree root.
+                    // assert((uintptr_t)pathp > (uintptr_t)path);
+                    assert(ix > 0);
+                    if (path[ix - 1].cmp < 0) {
+                        // rbtn_left_set(a_type, a_field, pathp[-1].node, tnode);
+                        path[ix - 1].node.link.left_set(tnode);
+                    } else {
+                        // rbtn_right_set(a_type, a_field, pathp[-1].node, tnode);
+                        path[ix - 1].node.link.right_set(tnode);
+                    }
+                    return;
+                } else {
+                    // a_type *right = rbtn_right_get(a_type, a_field, pathp->node);
+                    // a_type *rightleft = rbtn_left_get(a_type, a_field, right);
+                    var right = path[ix].node.link.right_get();
+                    var rightleft = right.link.left_get();
+                    // if (rightleft != NULL && rbtn_red_get(a_type, a_field, rightleft)) {
+                    if ((rightleft != NULL) && rightleft.link.red_get()) {
+                        //      ||
+                        //    pathp(b)
+                        //  //        \
+                        // (b)        (b)
+                        //           /
+                        //          (r)
+                        // a_type *tnode;
+                        // rbtn_black_set(a_type, a_field, rightleft);
+                        // rbtn_rotate_right(a_type, a_field, right, tnode);
+                        // rbtn_right_set(a_type, a_field, pathp->node, tnode);
+                        // rbtn_rotate_left(a_type, a_field, pathp->node, tnode);
+                        rightleft.link.black_set();
+                        var tnode = rotate_right(right);
+                        path[ix].node.link.right_set(tnode);
+                        tnode = rotate_left(path[ix].node);
+                        // Balance restored, but rotation modified
+                        // subtree root, which may actually be the
+                        // tree root.
+                        // if (pathp == path) {
+                        if (ix == 0) {
+                            // Set root.
+                            t.rbt_root = tnode;
+                        } else {
+                            if (path[ix - 1].cmp < 0) {
+                                //rbtn_left_set(a_type, a_field, pathp[-1].node, tnode);
+                                path[ix - 1].node.link.left_set(tnode);
+                            } else {
+                                //rbtn_right_set(a_type, a_field, pathp[-1].node, tnode);
+                                path[ix - 1].node.link.right_set(tnode);
+                            }
+                        }
+                        return;
+                    } else {
+                        //      ||
+                        //    pathp(b)
+                        //  //        \
+                        // (b)        (b)
+                        //           /
+                        //          (b)
+                        // a_type *tnode;
+                        // rbtn_red_set(a_type, a_field, pathp->node);
+                        // rbtn_rotate_left(a_type, a_field, pathp->node, tnode);
+                        // pathp->node = tnode;
+                        path[ix].node.link.red_set();
+                        var tnode = rotate_left(path[ix].node);
+                        path[ix].node = tnode;
+                    }
+                }
+            } else {
+                // a_type *left;
+                // rbtn_right_set(a_type, a_field, pathp->node,
+                //                pathp[1].node);
+                // left = rbtn_left_get(a_type, a_field, pathp->node);
+                path[ix].node.link.right_set(path[ix + 1].node);
+                var left = path[ix].node.link.left_get();
+                // if (rbtn_red_get(a_type, a_field, left)) {
+                if (left.link.red_get()) {
+                    // a_type *tnode;
+                    var tnode = NULL;
+                    // a_type *leftright = rbtn_right_get(a_type, a_field, left);
+                    // a_type *leftrightleft = rbtn_left_get(a_type, a_field, leftright);
+                    var leftright = left.link.right_get();
+                    var leftrightleft = leftright.link.left_get();
+                    // if (leftrightleft != NULL && rbtn_red_get(a_type, a_field, leftrightleft)) {
+                    if ((leftrightleft != NULL) && (leftrightleft.link.red_get())) {
+                        //      ||
+                        //    pathp(b)
+                        //   /        \\
+                        // (r)        (b)
+                        //   \
+                        //   (b)
+                        //   /
+                        // (r)
+                        // a_type *unode;
+                        // rbtn_black_set(a_type, a_field, leftrightleft);
+                        // rbtn_rotate_right(a_type, a_field, pathp->node, unode);
+                        // rbtn_rotate_right(a_type, a_field, pathp->node, tnode);
+                        // rbtn_right_set(a_type, a_field, unode, tnode);
+                        // rbtn_rotate_left(a_type, a_field, unode, tnode);
+                        leftrightleft.link.black_set();
+                        var unode = rotate_right(path[ix].node);
+                        tnode = rotate_right(path[ix].node);
+                        unode.link.right_set(tnode);
+                        tnode = rotate_left(unode);
+                    } else {
+                        //      ||
+                        //    pathp(b)
+                        //   /        \\
+                        // (r)        (b)
+                        //   \
+                        //   (b)
+                        //   /
+                        // (b)
+                        assert(leftright != NULL);
+                        // rbtn_red_set(a_type, a_field, leftright);
+                        // rbtn_rotate_right(a_type, a_field, pathp->node, tnode);
+                        // rbtn_black_set(a_type, a_field, tnode);
+                        leftright.link.red_set();
+                        tnode = rotate_right(path[ix].node);
+                        tnode.link.black_set();
+                    }
+                    // Balance restored, but rotation modified subtree
+                    // root, which may actually be the tree root.
+                    // if (pathp == path) {
+                    if (ix == 0) {
+                        // Set root.
+                        t.rbt_root = tnode;
+                    } else {
+                        if (path[ix - 1].cmp < 0) {
+                            // rbtn_left_set(a_type, a_field, pathp[-1].node, tnode);
+                            path[ix - 1].node.link.left_set(tnode);
+                        } else {
+                            // rbtn_right_set(a_type, a_field, pathp[-1].node, tnode);
+                            path[ix - 1].node.link.right_set(tnode);
+                        }
+                    }
+                    return;
+                    // } else if (rbtn_red_get(a_type, a_field, pathp->node)) {
+                } else if (path[ix].node.link.red_get()) {
+                    // a_type *leftleft = rbtn_left_get(a_type, a_field, left);
+                    var leftleft = left.link.left_get();
+                    if ((leftleft != NULL) && leftleft.link.red_get()) {
+                        //        ||
+                        //      pathp(r)
+                        //     /        \\
+                        //   (b)        (b)
+                        //   /
+                        // (r)
+                        // a_type *tnode;
+                        // rbtn_black_set(a_type, a_field, pathp->node);
+                        // rbtn_red_set(a_type, a_field, left);
+                        // rbtn_black_set(a_type, a_field, leftleft);
+                        // rbtn_rotate_right(a_type, a_field, pathp->node, tnode);
+                        path[ix].node.link.black_set();
+                        left.link.red_set();
+                        leftleft.link.black_set();
+                        var tnode = rotate_right(path[ix].node);
+                        // Balance restored, but rotation modified
+                        // subtree root.
+                        // assert((uintptr_t)pathp > (uintptr_t)path);
+                        assert(ix > 0);
+                        if (path[ix - 1].cmp < 0) {
+                            // rbtn_left_set(a_type, a_field, pathp[-1].node, tnode);
+                            path[ix - 1].node.link.left_set(tnode);
+                        } else {
+                            //rbtn_right_set(a_type, a_field, pathp[-1].node, tnode);
+                            path[ix - 1].node.link.right_set(tnode);
+                        }
+                        return;
+                    } else {
+                        //        ||                                      */
+                        //      pathp(r)                                  */
+                        //     /        \\                                */
+                        //   (b)        (b)                               */
+                        //   /                                            */
+                        // (b)                                            */
+                        // rbtn_red_set(a_type, a_field, left);
+                        // rbtn_black_set(a_type, a_field, pathp->node);
+                        left.link.red_set();
+                        path[ix].node.link.black_set();
+                        // Balance restored.
+                        return;
+                    }
+                } else {
+                    // a_type *leftleft = rbtn_left_get(a_type, a_field, left);
+                    // if (leftleft != NULL && rbtn_red_get(a_type, a_field, leftleft)) {
+                    var leftleft = left.link.left_get();
+                    if ((leftleft != NULL) && (leftleft.link.red_get())) {
+                        //        ||
+                        //      pathp(b)
+                        //     /        \\
+                        //   (b)        (b)
+                        //   /
+                        // (r)
+                        // a_type *tnode;
+                        // rbtn_black_set(a_type, a_field, leftleft);
+                        // rbtn_rotate_right(a_type, a_field, pathp->node, tnode);
+                        leftleft.link.black_set();
+                        var tnode = rotate_right(path[ix].node);
+                        // Balance restored, but rotation modified
+                        // subtree root, which may actually be the tree
+                        // root.
+                        // if (pathp == path) {
+                        if (ix == 0) {
+                            // Set root.
+                            t.rbt_root = tnode;
+                        } else {
+                            if (path[ix -1 ].cmp < 0) {
+                                // rbtn_left_set(a_type, a_field, pathp[-1].node, tnode);
+                                path[ix - 1].node.link.left_set(tnode);
+                            } else {
+                                // rbtn_right_set(a_type, a_field, pathp[-1].node, tnode);
+                                path[ix - 1].node.link.right_set(tnode);
+                            }
+                        }
+                        return;
+                    } else {
+                        //        ||
+                        //      pathp(b)
+                        //     /        \\
+                        //   (b)        (b)
+                        //   /
+                        // (b)
+                        // rbtn_red_set(a_type, a_field, left);
+                        left.link.red_set();
+                    }
+                }
+            }
+        }
+        // Set root.
+        %%printNamedHex("at end ix=", ix, io.stdout);
+        if (ix >= path.len) ix +%= 1;
+        t.rbt_root = path[ix].node;
+        // hmm
+        assert(!t.rbt_root.link.red_get());
     }
 }
