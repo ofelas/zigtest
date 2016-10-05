@@ -31,7 +31,8 @@ test: malltest Makefile
 
 .PHONY:
 rbtest:
-	$(ZIG) test --check-unused rbtest.zig
+	time -p $(ZIG) test --check-unused rbtest.zig
+	time -p $(ZIG) test --release --check-unused rbtest.zig
 
 .PHONY:
 clean:

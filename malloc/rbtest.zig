@@ -72,17 +72,18 @@ fn ncmp(a: &example_node, b: &example_node) -> isize {
 
 fn testMe() {
     @setFnTest(this, true);
+    @setFnStaticEval(this, false);
     const stream = std.io.stdout;
     const assert = std.debug.assert;
     // a bit optimistic
-    var x: [10000]example_node = zeroes;
+    var x: [50000]example_node = zeroes;
     // In [3]: math.log(250000, 2)
     // Out[3]: 17.931568569324174
 
     var t: example_tree = zeroes;
     var it = usize(0);
     t.init();
-    const upper = x.len;
+    var upper = usize(x.len);
     //n.link.init(&t.rbt_nil);
     //m.link.init(&t.rbt_nil);
     var sz = t.black_height();
@@ -95,12 +96,12 @@ fn testMe() {
     it = usize(0);
     while (it < upper; it += 1) {
         if (it & 1 == 1) {
-            x[it].example = usize(@maxValue(isize)) - it;
+            x[it].example = upper - it;
         } else {
-            x[it].example = usize(@maxValue(isize)) + it;
+            x[it].example = upper + it;
         }
         // add them in sequence (ascending or decending) or else it fails, spot the bug..
-        x[it].example = (x.len - it);
+        // x[it].example = it;
         t.insert(&x[it]);
         if (var tn ?= t.search(&x[it])) {
             //%%stream.printf("potential match\n");
@@ -114,8 +115,10 @@ fn testMe() {
         // %%stream.printf("\n");
         //@breakpoint();
     }
-    // %%t.rbt_root.dump(0, 'T');
-    %%stream.printInt(usize, @sizeOf(@typeOf(t)));
+    if (upper < 33) {
+        %%t.rbt_root.dump(0, 'T');
+    }
+    %%printNamedHex("sizeOf(t)=", usize(@sizeOf(@typeOf(t))), stream);
     %%stream.printf("\n");
     sz = t.black_height();
     %%stream.write("black_height:");
@@ -127,18 +130,18 @@ fn testMe() {
     while (it < upper; it += 1) {
         var ii = it + usize(1);
         //%%t.rbt_root.dump(0, 'T');
-        %%printNamedHex("Removing node: ", usize(&x[it]), io.stdout);
+        //%%printNamedHex("Removing node: ", usize(&x[it]), io.stdout);
         var rn = t.search(&x[it]) ?? {
             (&example_node)(usize(0))
         };
-        %%printNamedHex("Searched node: ", usize(rn), io.stdout);
-        //@fence();
-        %%io.stdout.printf("\n");
+        //%%printNamedHex("Searched node: ", usize(rn), io.stdout);
         assert(rn == &x[it]);
         assert(!t.empty());
         t.remove(&x[it]);
         //%%t.rbt_root.dump(0, 'T');
-        //var rn = ??t.search(&x[it]);
+        if (var rr ?= t.search(&x[it])) {
+            %%io.stdout.printf("error it was found!!!\n");
+        }
         while (ii < upper; ii += 1) {
             rn = ??t.search(&x[ii]);
             assert(rn == &x[ii]);
@@ -150,4 +153,5 @@ fn testMe() {
     %%stream.printf("\n");
     %%t.rbt_root.dump(0, 'T');
     assert(t.empty());
+    %%t.dumpstats(io.stdout);
 }
