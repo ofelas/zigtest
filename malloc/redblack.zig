@@ -215,7 +215,7 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
 
     pub fn dump(t: &Self, n: &T) -> %void {
         if (n == NULL_PTR(n)) return;
-        %%io.stdout.printInt(usize, n.example);
+        //%%io.stdout.printInt(usize, n.example);
         %%io.stdout.printf("\n");
         var nn = n.link.left_get();
         if (nn != NULL_PTR(nn)) {

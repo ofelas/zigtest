@@ -51,16 +51,34 @@ pub fn quicksearch(needle: []u8, nlen: usize, haystack: []u8, hlen: usize) -> is
     return isize(-1);
 }
 
-// pub struct QuickSearch {
-//     badchar: [ALPHABET_SIZE]isize,
-//     searchpos: isize,
-//
-//     pub fn init(qs: &QuickSearch, pattern: []u8, patternLen: usize) -> %void {
-//         if (patternLen > @maxValue(isize)) return error.PatternTooLong;
-//         pre_quicksearch_badchar(pattern, patternLen, qs.badchar);
-//     }
-//
-//     pub fn search() -> isize {
-//
-//     }
-// }
+pub struct QuickSearch {
+    badchar: [ALPHABET_SIZE]isize,
+    searchpos: isize,
+    pub patternlen: isize,
+
+    pub fn init(qs: &QuickSearch, pattern: []u8) -> %void {
+        if (pattern.len > @maxValue(isize)) return error.PatternTooLong;
+        pre_quicksearch_badchar(pattern, pattern.len, qs.badchar);
+        qs.searchpos = 0;
+        qs.patternlen = isize(pattern.len);
+    }
+
+    pub fn search(qs: &QuickSearch, needle: []u8, haystack: []u8) -> isize {
+        // Searching
+        const nlen = isize(needle.len);
+        const endpos = isize(haystack.len) - nlen;
+        if ((needle.len == 0) || (haystack.len < needle.len)) return -1;
+        while (qs.searchpos <= endpos) {
+            if (matches(needle, haystack[usize(qs.searchpos) ... ], usize(nlen)))
+            {
+                const ret = qs.searchpos;
+                qs.searchpos += nlen;
+                return ret;
+            }
+            // shift
+            qs.searchpos += qs.badchar[haystack[usize(qs.searchpos + isize(nlen))]];
+        }
+
+        return isize(-1);
+    }
+}
