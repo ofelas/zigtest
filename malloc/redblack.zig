@@ -227,6 +227,10 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         }
     }
 
+    pub fn last(t: &Self) -> ?&T {
+        return null;            // TODO
+    }
+
     pub fn first(t: &Self) -> ?&T {
         const n = t.rbt_root.link.first(t.rbt_root, NULL_PTR(t.rbt_root));
         if (n == NULL_PTR(n)) {
