@@ -224,8 +224,12 @@ const SIZEOF_PTR_2POW =  usize(3);
 //const CPU_SPINWAIT = asm volatile("pause");
 
 inline fn cpuSpinWait() {
-    //asm volatile("pause");
+    switch (@compileVar("arch")) {
+        i386 => asm volatile("pause"),
+        else => {},
+    }
 }
+
 // #endif
 // #ifdef __arm__
 // #  define PAGESIZE_2POW         12
@@ -1552,12 +1556,11 @@ fn pages_map(addr: &u8, size: usize) -> ?&u8 {
 inline fn pages_unmap(addr: &u8, size: usize) {
     const r = system.munmap(addr, size);
     if (r == MAP_FAILED) {
-        // buf: [STRERROR_BUF]u8 = "error";
+        // var buf: [STRERROR_BUF]u8 = "error";
         // #if HAVE_THREADS != 0
         //         strerror_r(errno, buf, sizeof(buf));
         // #endif
-        // _malloc_message(_getprogname(),
-        //                 ": (malloc) Error in munmap(): ", buf, "\n");
+        %%_malloc_message(_getprogname(), ": (malloc) Error in munmap(): ", "error", "\n");
         if (opt_abort) {
             %%abort();
         }
@@ -1684,10 +1687,11 @@ fn chunk_dealloc(chunk: &u8, size: usize) {
     chunk_dealloc_mmap(chunk, size);
 }
 
+//******************************************************************************
 // End chunk management functions.
 //******************************************************************************
 // Begin arena.
-
+//******************************************************************************
 // Choose an arena based on a per-thread value (fast-path code, calls
 // slow-path code if necessary).
 inline fn choose_arena() -> ?&arena_t {
@@ -1894,7 +1898,7 @@ inline fn arena_run_reg_alloc(run: &arena_run_t, bin: &arena_bin_t) -> ?&u8 {
         assert(regind < bin.nregs);
         ret = (&u8)(usize(run) + bin.reg0_offset + (bin.reg_size * regind));
 
-        //* Clear bit. */
+        // Clear bit.
         mask ^= (1 << bit);
         run.regs_mask[i] = mask;
 
@@ -2554,22 +2558,23 @@ fn arena_purge(arena: &arena_t) {
 inline fn arena_lock_balance(arena: &arena_t) {
     if (MALLOC_BALANCE) {
         //     unsigned contention;
-        //     contention = malloc_spin_lock(&arena->lock);
-        //     if (narenas > 1) {
-        //         // Calculate the exponentially averaged contention for this
-        //         // arena.  Due to integer math always rounding down, this
-        //         // value decays somewhat faster than normal.
-        //         arena->contention = (((uint64_t)arena->contention
-        //                               * (uint64_t)((1 << BALANCE_ALPHA_INV_2POW)-1))
-        //                              + (uint64_t)contention) >> BALANCE_ALPHA_INV_2POW;
-        //         if (arena->contention >= opt_balance_threshold) {
-        //             arena_lock_balance_hard(arena);
-        //         }
-        //     }
+        var contention = malloc_spin_lock(&arena.lock);
+        if (narenas > 1) {
+            // Calculate the exponentially averaged contention for this
+            // arena.  Due to integer math always rounding down, this
+            // value decays somewhat faster than normal.
+            arena.contention = u32((u64(arena.contention) * u64((1 << BALANCE_ALPHA_INV_2POW)-1))
+                                + (u64(contention) >> BALANCE_ALPHA_INV_2POW));
+            if (arena.contention >= opt_balance_threshold) {
+                arena_lock_balance_hard(arena);
+            }
+        }
     }
 }
 // #endif
 
+fn arena_lock_balance_hard(arena: &arena_t) {
+}
 // static void
 // arena_lock_balance_hard(arena_t *arena) {
 //     uint32_t ind;
@@ -2593,7 +2598,7 @@ inline fn arena_lock_balance(arena: &arena_t) {
 
 
 // static inline void *
-fn arena_malloc_small(arena: &arena_t, size: usize, zero: bool) -> &u8 {
+inline fn arena_malloc_small(arena: &arena_t, size: usize, zero: bool) -> &u8 {
     //     void *ret;
     //     arena_bin_t *bin;
     //     arena_run_t *run;
@@ -2759,6 +2764,9 @@ inline fn icalloc(size: usize) -> &u8 {
 // }
 
 // static inline void *
+fn ipalloc(alignment: usize, size: usize) -> ?&u8 {
+    return null;
+}
 // ipalloc(size_t alignment, size_t size) {
 //     void *ret;
 //     size_t ceil_size;
@@ -3426,6 +3434,20 @@ inline fn huge_dalloc(ptr: &u8) {
     }
 }
 
+pub fn abort() -> %void {
+    %%io.stderr.printf("An error occured");
+}
+
+pub fn _malloc_message(a: []u8, b: []u8, c: []u8, d: []u8) -> %void {
+    %%io.stderr.write(a);
+    %%io.stderr.write("");
+    %%io.stderr.write(b);
+    %%io.stderr.write("");
+    %%io.stderr.write(c);
+    %%io.stderr.write("");
+    %%io.stderr.printf(d);
+}
+
 fn malloc_print_stats() -> %void {
     if (opt_print_stats) {
         var s: [UMAX2S_BUFSIZE]u8 = zeroes;
@@ -3498,7 +3520,7 @@ fn malloc_print_stats() -> %void {
             %%_malloc_message("Allocated: ", umax2s(allocated, s), ", mapped: ", umax2s(mapped, ss));
             // #ifdef MALLOC_BALANCE
             if (MALLOC_BALANCE) {
-                %%_malloc_message("Arena balance reassignments: ", umax2s(nbalance, s), "\n", "");
+                %%_malloc_message("\nArena balance reassignments: ", umax2s(nbalance, s), "\n", "");
             }
             // #endif
             // Print chunk stats.
@@ -3518,7 +3540,7 @@ fn malloc_print_stats() -> %void {
                     if (usize(arena) != usize(0)) {
                         %%_malloc_message("\narenas[", umax2s(i, s), "]\n", "");
                         malloc_spin_lock(&arena.lock);
-                        // stats_print(arena);
+                        %%stats_print(arena);
                         malloc_spin_unlock(&arena.lock);
                     }
                 }
@@ -4100,24 +4122,11 @@ fn malloc_init_hard() -> bool {
     //#endif
 }
 
+//***************************************
 // End general internal functions.
 //***************************************
 // Begin malloc(3)-compatible functions.
-
-pub fn abort() -> %void {
-    %%io.stderr.printf("An error occured");
-}
-
-pub fn _malloc_message(a: []u8, b: []u8, c: []u8, d: []u8) -> %void {
-    %%io.stderr.write(a);
-    %%io.stderr.write("");
-    %%io.stderr.write(b);
-    %%io.stderr.write("");
-    %%io.stderr.write(c);
-    %%io.stderr.write("");
-    %%io.stderr.printf(d);
-}
-
+//***************************************
 pub fn je_malloc(size: usize) -> ?&u8 {
     var ret: ?&u8 = null;
     var lsize = size;
@@ -4152,57 +4161,43 @@ pub fn je_malloc(size: usize) -> ?&u8 {
 
 /// NOTE: this function assumes that any checks on alignment have
 /// already been done and that malloc_init() has been called
-// static int
-// memalign_base(void **memptr, size_t alignment, size_t size, const char *caller)
-// {
-//         int ret;
-//         void *result;
-//         result = ipalloc(alignment, size);
-//         if (result == null) {
-//                 if (opt_xmalloc) {
-//                         _malloc_message(_getprogname(),
-//                         ": (malloc) Error in ",
-//                         caller,
-//                         "(): out of memory\n");
-//                         abort();
-//                 }
-//                 ret = ENOMEM;
-//                 goto RETURN;
-//         }
-//         *memptr = result;
-//         ret = 0;
-// RETURN:
-//         UTRACE(0, size, result);
-//         return (ret);
-// }
+fn memalign_base(memptr: &&u8, alignment: usize, size: usize, caller: []u8) -> isize {
+    var ret = isize(0);
+    if (var result ?= ipalloc(alignment, size)) {
+        *memptr = result;
+    } else {
+        if (opt_xmalloc) {
+            %%_malloc_message(_getprogname(), ": (malloc) Error in ", caller, "(): out of memory\n");
+            %%abort();
+        }
+        ret = -1;
+    }
 
-// int
-// FUNC_NAME(je_posix_memalign)(void **memptr, size_t alignment, size_t size)
-// {
-//         int ret;
+    // UTRACE(0, size, result);
+    return ret;
+}
 
-//         if (malloc_init())
-//                 ret = ENOMEM;
-//         else {
-//                 /* Make sure that alignment is a large enough power of 2. */
-//                 if (((alignment - 1) & alignment) != 0
-//                     || alignment < sizeof(void *)) {
-//                         if (opt_xmalloc) {
-//                                 _malloc_message(_getprogname(),
-//                                     ": (malloc) Error in posix_memalign(): "
-//                                     "invalid alignment\n", "", "");
-//                                 abort();
-//                         }
-//                         ret = EINVAL;
-//                         goto RETURN;
-//                 }
-
-//                 ret = memalign_base(memptr, alignment, size, __func__);
-//         }
-
-// RETURN:
-//         return (ret);
-// }
+pub fn je_posix_memalign(memptr: &&u8, alignment: usize , size: usize) -> isize {
+    var ret = isize(0);
+    if (malloc_init()) {
+        ret = -1;
+    } else {
+        // Make sure that alignment is a large enough power of 2.
+        if (((alignment - 1) & alignment) != 0
+            || alignment < @sizeOf(usize)) {
+            if (opt_xmalloc) {
+                %%_malloc_message(_getprogname(), ": (malloc) Error in posix_memalign(): ",
+                                  "invalid alignment\n", "");
+                %%abort();
+            }
+            ret = -1;
+            goto RETURN;
+        }
+        ret = memalign_base(memptr, alignment, size, "je_posix_memalign"); // __func__
+    }
+ RETURN:
+    return (ret);
+}
 
 // void*
 // FUNC_NAME(je_memalign)(size_t boundary, size_t size)
@@ -4225,29 +4220,26 @@ pub fn je_malloc(size: usize) -> ?&u8 {
 //         return (result);
 // }
 
-// void*
-// FUNC_NAME(je_valloc)(size_t size)
-// {
-//         void *result = null;
-//         if (malloc_init())
-//                 result = null;
-//         else 
-//                 (void)memalign_base(&result, pagesize, size, __func__);
-//         return result;
-// }
+pub fn je_valloc(size: usize) -> ?&u8 {
+    if (malloc_init()) {
+        return null;
+    } else {
+        var result: &u8 = undefined;
+        memalign_base(&result, pagesize, size, "je_valloc"); // __func__
+        return result;
+    }
+}
 
 // void *
 // FUNC_NAME(je_calloc)(size_t num, size_t size)
 // {
 //         void *ret;
 //         size_t num_size;
-
 //         if (malloc_init()) {
 //                 num_size = 0;
 //                 ret = null;
 //                 goto RETURN;
 //         }
-
 //         num_size = num * size;
 //         if (num_size == 0) {
 //                 if ((opt_sysv == false) && ((num == 0) || (size == 0)))
@@ -4336,6 +4328,8 @@ pub fn je_free(ptr: &u8) {
     }
 }
 
+// TODO: Can we have weak linkage in zig?
+
 // #if !defined(HEAP_TRACKING)
 // void* malloc(size_t size) __attribute__ ((weak, alias ("je_malloc")));
 // void  free(void* ptr) __attribute__ ((weak, alias ("je_free")));
@@ -4346,81 +4340,72 @@ pub fn je_free(ptr: &u8) {
 // int   posix_memalign(void **memptr, size_t alignment, size_t size) __attribute__ ((weak, alias("je_posix_memalign")));
 // #endif
 
-// /*
-//  * End malloc(3)-compatible functions.
-//  */
-// /******************************************************************************/
-// /*
-//  * Begin non-standard functions.
-//  */
-// size_t
-// malloc_usable_size(const void *ptr)
-// {
-//         assert(ptr != null);
-//         return (isalloc(ptr));
-// }
-// /*
-//  * End non-standard functions.
-//  */
-// /******************************************************************************/
-// /*
-//  * Begin library-private functions.
-//  */
-// /******************************************************************************/
-// /*
-//  * Begin thread cache.
-//  */
-// /*
-//  * We provide an unpublished interface in order to receive notifications from
-//  * the pthreads library whenever a thread exits.  This allows us to clean up
-//  * thread caches.
-//  */
+//******************************************************************************
+// End malloc(3)-compatible functions.
+//******************************************************************************
+// Begin non-standard functions.
+//******************************************************************************
+fn malloc_usable_size(ptr: &u8) -> usize {
+    assert(usize(ptr) != usize(0));
+    return isalloc(ptr);
+}
+
+//******************************************************************************
+// End non-standard functions.
+//******************************************************************************
+// Begin library-private functions.
+//******************************************************************************
+// Begin thread cache.
+//******************************************************************************
+// We provide an unpublished interface in order to receive notifications from
+// the pthreads library whenever a thread exits.  This allows us to clean up
+// thread caches.
 // void
-// _malloc_thread_cleanup(void)
-// {
-// }
-// /*
-//  * The following functions are used by threading libraries for protection of
-//  * malloc during fork().  These functions are only called if the program is
-//  * running in threaded mode, so there is no need to check whether the program
-//  * is threaded here.
-//  */
+pub fn _malloc_thread_cleanup() {
+    // nothing here...
+}
 
-// void
-// _malloc_prefork(void)
-// {
-//         unsigned i;
-//         /* Acquire all mutexes in a safe order. */
-//         malloc_spin_lock(&arenas_lock);
-//         for (i = 0; i < narenas; i++) {
-//                 if (arenas[i] != null)
-//                         malloc_spin_lock(&arenas[i]->lock);
-//         }
-//         malloc_spin_unlock(&arenas_lock);
-//         malloc_mutex_lock(&base_mtx);
-//         malloc_mutex_lock(&huge_mtx);
-// }
+// The following functions are used by threading libraries for protection of
+// malloc during fork().  These functions are only called if the program is
+// running in threaded mode, so there is no need to check whether the program
+// is threaded here.
 
-// void
-// _malloc_postfork(void)
-// {
-//         unsigned i;
-//         /* Release all mutexes, now that fork() has completed. */
-//         malloc_mutex_unlock(&huge_mtx);
-//         malloc_mutex_unlock(&base_mtx);
-//         malloc_spin_lock(&arenas_lock);
-//         for (i = 0; i < narenas; i++) {
-//                 if (arenas[i] != null)
-//                         malloc_spin_unlock(&arenas[i]->lock);
-//         }
-//         malloc_spin_unlock(&arenas_lock);
-// }
+pub fn _malloc_prefork() {
+    // Acquire all mutexes in a safe order.
+    malloc_spin_lock(&arenas_lock);
+    { var i = usize(0);
+        while (i < narenas; i += 1) {
+            if (usize(arenas[i]) != usize(0)) {
+                malloc_spin_lock(&arenas[i].lock);
+            }
+        }
+    }
+    malloc_spin_unlock(&arenas_lock);
+    malloc_mutex_lock(&base_mtx);
+    malloc_mutex_lock(&huge_mtx);
+}
 
-// /*
-//  * End library-private functions.
-//  */
-// /******************************************************************************/
+pub fn _malloc_postfork() {
+    // Release all mutexes, now that fork() has completed.
+    malloc_mutex_unlock(&huge_mtx);
+    malloc_mutex_unlock(&base_mtx);
+    malloc_spin_lock(&arenas_lock);
+    { var i = usize(0);
+        while (i < narenas; i += 1) {
+            if (usize(arenas[i]) != usize(0)) {
+                malloc_spin_unlock(&arenas[i].lock);
+            }
+        }
+    }
+    malloc_spin_unlock(&arenas_lock);
+}
+//******************************************************************************
+// End library-private functions.
+//******************************************************************************
 
+//******************************************************************************
+// Some tests
+//******************************************************************************
 fn testMallocInit() {
     @setFnTest(this, true);
     opt_print_stats = true;
