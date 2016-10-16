@@ -13,7 +13,7 @@ pub var chunksize_mask = chunksize - 1;
 
 /// Return the chunk address for allocation address a.
 pub inline fn CHUNK_ADDR2BASE(a: &u8) -> &u8 {
-    return ((&u8)(usize(a) & ~chunksize_mask));
+    return (&u8)((usize(a) & ~(usize)(chunksize_mask)));
 }
 
 /// Return the chunk offset of address a.

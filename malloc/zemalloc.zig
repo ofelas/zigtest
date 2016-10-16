@@ -1452,7 +1452,49 @@ fn stats_print(arena: &arena_t) -> %void {
                           "\n", "");
         // totals
         %%_malloc_message("mapped:", umax2s(arena.stats.mapped, s),
-                          "\n", "");
+                          "\nbins:", "\n");
+        {
+            var i = usize(0);
+            var gap_start = usize(@maxValue(i32));
+
+            while (i < nbins; i += 1) {
+                var bin = &(&arena.bins)[i];
+                var st = bin.stats;
+                if (st.nruns == 0) {
+                    if (gap_start == usize(@maxValue(i32))) {
+                        gap_start = i;
+                    }
+                } else {
+                    if (gap_start != usize(@maxValue(i32))) {
+                        if (i > gap_start + 1) {
+                            %%_malloc_message("[", umax2s(gap_start, s), "..", umax2s(i - 1, ss));
+                            %%_malloc_message("]\n", "", "", "");
+                        } else {
+                            %%_malloc_message("[", umax2s(gap_start, s), "]\n", "");
+                        }
+                        gap_start = usize(@maxValue(i32));
+                    }
+                    // arena->bins[i].reg_size,
+                    // arena->bins[i].nregs,
+
+                    %%_malloc_message("i=", umax2s(i, s), ", reg_size=", umax2s(bin.reg_size, ss));
+                    %%_malloc_message(", nregs=", umax2s(bin.nregs, s), ", run_size=", umax2s(bin.run_size >> pagesize_2pow, ss));
+                    %%_malloc_message(", nrequests=", umax2s(st.nrequests, s), ", reruns=", umax2s(st.reruns, ss));
+                    %%_malloc_message(", highruns=", umax2s(st.highruns, s), ", curruns=", umax2s(st.curruns, ss));
+                    %%_malloc_message("\n", "", "", "");
+                }
+             }
+            if (gap_start != usize(@maxValue(i32))) {
+                if (i > gap_start + 1) {
+                    // Gap of more than one size class.
+                    %%_malloc_message("[", umax2s(gap_start, s), "..", umax2s(i - 1, ss));
+                    %%_malloc_message("]\n", "", "", "");
+                } else {
+                    // Gap of one size class.
+                    %%_malloc_message("[", umax2s(gap_start, s), "]\n", "");
+                }
+            }
+        }
     }
 }
 //     unsigned i, gap_start;
@@ -2081,8 +2123,6 @@ fn arena_run_split(arena: &arena_t, run: &arena_run_t, size: usize, large: bool,
     var old_ndirty = chunk.ndirty;
     const run_ind = ((usize(run) - usize(chunk)) >> pagesize_2pow);
     // TODO[#173] the .map is dynamically sized
-    var bits = (&(&chunk.map)[run_ind]).bits;
-    // total_pages is zero, it may not have been initialized properly
     var total_pages = ((*(&(&chunk.map)[run_ind].bits) & ~(usize)(pagesize_mask)) >> pagesize_2pow);
     var need_pages = (size >> pagesize_2pow);
     assert(need_pages > 0);
@@ -2092,7 +2132,7 @@ fn arena_run_split(arena: &arena_t, run: &arena_run_t, size: usize, large: bool,
     arena.runs_avail.remove(&(&chunk.map)[run_ind]);
     // Keep track of trailing unused pages for later use.
     if (rem_pages > 0) {
-        %%io.stdout.printf("rem_pages > 0\n");
+        // %%io.stdout.printf("rem_pages > 0\n");
         // TODO[#173]
         *(&(&chunk.map)[run_ind+need_pages].bits) = (rem_pages << pagesize_2pow)
             | (*(&(&chunk.map)[run_ind + need_pages].bits) & pagesize_mask);
@@ -2134,9 +2174,9 @@ fn arena_run_split(arena: &arena_t, run: &arena_run_t, size: usize, large: bool,
     if (large) {
         *(&(&chunk.map)[run_ind].bits) |= size;
     }
-    // if (chunk->ndirty == 0 && old_ndirty > 0) {
-    //     arena_chunk_tree_dirty_remove(&arena.chunks_dirty, chunk);
-    // }
+    if (chunk.ndirty == 0 && old_ndirty > 0) {
+        arena.chunks_dirty.remove(chunk);
+    }
 }
 
 fn arena_chunk_alloc(arena: &arena_t) -> &arena_chunk_t {
@@ -2276,6 +2316,7 @@ fn arena_purge(arena: &arena_t) {
     // only been partially purged.
     while (arena.ndirty > (opt_dirty_max >> 1)) {
         //var chunk = arena_chunk_tree_dirty_last(&arena.chunks_dirty);
+        // TODO!!!: Implement missing functionality in redblack.zig...
         var cchunk = arena.chunks_dirty.last();
         assert(usize(cchunk) != usize(0));
         var i = chunk_npages - 1;
@@ -2294,6 +2335,7 @@ fn arena_purge(arena: &arena_t) {
                     chunk.ndirty -= npages;
                     arena.ndirty -= npages;
 
+                    // TODO: fixup madvise...
                     // madvise((void *)((uintptr_t)chunk + (i << pagesize_2pow)), (npages << pagesize_2pow),
                     //         MADV_DONTNEED);
                     //#ifdef MALLOC_STATS
@@ -2323,87 +2365,86 @@ fn arena_purge(arena: &arena_t) {
 fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
     //     arena_chunk_t *chunk;
     //     size_t size, run_ind, run_pages;
-    //     chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(run);
-    //     run_ind = (size_t)(((uintptr_t)run - (uintptr_t)chunk)
-    //                        >> pagesize_2pow);
-    //     assert(run_ind >= arena_chunk_header_npages);
-    //     assert(run_ind < chunk_npages);
-    //     if ((chunk->map[run_ind].bits & CHUNK_MAP_LARGE) != 0) {
-    //         size = chunk->map[run_ind].bits & ~pagesize_mask;
-    //     } else {
-    //         size = run->bin->run_size;
-    //     }
-    //     run_pages = (size >> pagesize_2pow);
-    //     // Mark pages as unallocated in the chunk map.
-    //     if (dirty) {
-    //         size_t i;
-    //         for (i = 0; i < run_pages; i++) {
-    //             assert((chunk->map[run_ind + i].bits & CHUNK_MAP_DIRTY)
-    //                    == 0);
-    //             chunk->map[run_ind + i].bits = CHUNK_MAP_DIRTY;
-    //         }
-    //         if (chunk->ndirty == 0) {
-    //             arena_chunk_tree_dirty_insert(&arena->chunks_dirty,
-    //                                           chunk);
-    //         }
-    //         chunk->ndirty += run_pages;
-    //         arena->ndirty += run_pages;
-    //     } else {
-    //         size_t i;
-    //         for (i = 0; i < run_pages; i++) {
-    //             chunk->map[run_ind + i].bits &= ~(CHUNK_MAP_LARGE |
-    //                                               CHUNK_MAP_ALLOCATED);
-    //         }
-    //     }
-    //     chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
-    //                                        pagesize_mask);
-    //     chunk->map[run_ind+run_pages-1].bits = size |
-    //         (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
-    //     //* Try to coalesce forward. */
-    //     if (run_ind + run_pages < chunk_npages &&
-    //         (chunk->map[run_ind+run_pages].bits & CHUNK_MAP_ALLOCATED) == 0) {
-    //         size_t nrun_size = chunk->map[run_ind+run_pages].bits &
-    //             ~pagesize_mask;
-    //         // Remove successor from runs_avail; the coalesced run
-    //         // is inserted later.
-    //         arena_avail_tree_remove(&arena->runs_avail,
-    //                                 &chunk->map[run_ind+run_pages]);
-    //         size += nrun_size;
-    //         run_pages = size >> pagesize_2pow;
-    //         assert((chunk->map[run_ind+run_pages-1].bits & ~pagesize_mask)
-    //                == nrun_size);
-    //         chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
-    //                                            pagesize_mask);
-    //         chunk->map[run_ind+run_pages-1].bits = size |
-    //             (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
-    //     }
-    //     // Try to coalesce backward.
-    //     if (run_ind > arena_chunk_header_npages && (chunk->map[run_ind-1].bits &
-    //                                                 CHUNK_MAP_ALLOCATED) == 0) {
-    //         size_t prun_size = chunk->map[run_ind-1].bits & ~pagesize_mask;
-    //         run_ind -= prun_size >> pagesize_2pow;
-    //         // Remove predecessor from runs_avail; the coalesced run is
-    //         // inserted later.
-    //         arena_avail_tree_remove(&arena->runs_avail,
-    //                                 &chunk->map[run_ind]);
-    //         size += prun_size;
-    //         run_pages = size >> pagesize_2pow;
-    //         assert((chunk->map[run_ind].bits & ~pagesize_mask) ==
-    //                prun_size);
-    //         chunk->map[run_ind].bits = size | (chunk->map[run_ind].bits &
-    //                                            pagesize_mask);
-    //         chunk->map[run_ind+run_pages-1].bits = size |
-    //             (chunk->map[run_ind+run_pages-1].bits & pagesize_mask);
-    //     }
-    //     // Insert into runs_avail, now that coalescing is complete.
-    //     arena_avail_tree_insert(&arena->runs_avail, &chunk->map[run_ind]);
-    //     // Deallocate chunk if it is now completely unused.
-    //     if ((chunk->map[arena_chunk_header_npages].bits & (~pagesize_mask |
-    //                                                        CHUNK_MAP_ALLOCATED)) == arena_maxclass)
-    //         arena_chunk_dealloc(arena, chunk);
-    //     // Enforce opt_dirty_max.
-    //     if (arena->ndirty > opt_dirty_max)
-    //         arena_purge(arena);
+    var chunk = (&arena_chunk_t)(CHUNK_ADDR2BASE((&u8)(run)));
+    var run_ind = ((usize(run) - usize(chunk)) >> pagesize_2pow);
+    assert(run_ind >= arena_chunk_header_npages);
+    assert(run_ind < chunk_npages);
+    var size = usize(0);
+    if ((*(&(&chunk.map)[run_ind].bits) & CHUNK_MAP_LARGE) != 0) {
+        size = *(&(&chunk.map)[run_ind].bits) & ~pagesize_mask;
+    } else {
+        size = run.bin.run_size;
+    }
+    var run_pages = (size >> pagesize_2pow);
+    // Mark pages as unallocated in the chunk map.
+    if (dirty) {
+        { var i = usize(0);
+            while (i < run_pages; i += 1) {
+                assert((*(&(&chunk.map)[run_ind + i].bits) & CHUNK_MAP_DIRTY) == 0);
+                *(&(&chunk.map)[run_ind + i].bits) = CHUNK_MAP_DIRTY;
+            }
+            if (chunk.ndirty == 0) {
+                arena.chunks_dirty.insert(chunk);
+            }
+            chunk.ndirty += run_pages;
+            arena.ndirty += run_pages;
+        }
+    } else {
+        { var i = usize(0);
+            while (i < run_pages; i += 1) {
+                *(&(&chunk.map)[run_ind + i].bits) &= ~(CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED);
+            }
+        }
+    }
+    *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
+    *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
+    // Try to coalesce forward.
+    if (((run_ind + run_pages) < chunk_npages) && (*(&(&chunk.map)[run_ind+run_pages].bits) & CHUNK_MAP_ALLOCATED) == 0) {
+        // if (@compileVar("is_test")) {
+        //     %%io.stdout.printf("Try to coalesce forward.\n");
+        // }
+        const nrun_size = *(&(&chunk.map)[run_ind+run_pages].bits) & ~pagesize_mask;
+        // Remove successor from runs_avail; the coalesced run is
+        // inserted later.
+        arena.runs_avail.remove(&(&chunk.map)[run_ind+run_pages]);
+        size += nrun_size;
+        run_pages = size >> pagesize_2pow;
+        assert((*(&(&chunk.map)[run_ind+run_pages-1].bits) & ~pagesize_mask) == nrun_size);
+        *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
+        *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
+    }
+    // Try to coalesce backward.
+    if ((run_ind > arena_chunk_header_npages) && (*(&(&chunk.map)[run_ind-1].bits) & CHUNK_MAP_ALLOCATED) == 0) {
+        // if (@compileVar("is_test")) {
+        //     %%io.stdout.printf("Try to coalesce backward.\n");
+        // }
+        const prun_size = *(&(&chunk.map)[run_ind-1].bits) & ~pagesize_mask;
+        run_ind -= prun_size >> pagesize_2pow;
+        // Remove predecessor from runs_avail; the coalesced run is
+        // inserted later.
+        arena.runs_avail.remove(&(&chunk.map)[run_ind]);
+        size += prun_size;
+        run_pages = size >> pagesize_2pow;
+        assert((*(&(&chunk.map)[run_ind].bits) & ~pagesize_mask) == prun_size);
+        *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
+        *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
+    }
+    // Insert into runs_avail, now that coalescing is complete.
+    arena.runs_avail.insert(&(&chunk.map)[run_ind]);
+    // Deallocate chunk if it is now completely unused.
+    if ((*(&(&chunk.map)[arena_chunk_header_npages].bits) & (~pagesize_mask | CHUNK_MAP_ALLOCATED)) == arena_maxclass) {
+        if (@compileVar("is_test")) {
+            %%io.stdout.printf("dealloc completely unused arena.\n");
+        }
+        arena_chunk_dealloc(arena, chunk);
+    }
+    // Enforce opt_dirty_max.
+    if (arena.ndirty > opt_dirty_max) {
+        if (@compileVar("is_test")) {
+            %%io.stdout.printf("must purge arena.\n");
+        }
+        arena_purge(arena);
+    }
 }
 
 fn arena_run_trim_head(arena: &arena_t, chunk: &arena_chunk_t, run: &arena_run_t, oldsize: usize, newsize: usize) {
@@ -2440,9 +2481,9 @@ fn arena_bin_nonfull_run_get(arena: &arena_t, bin: &arena_bin_t) -> ?&arena_run_
     var mapelm = bin.runs.first();
     if (usize(mapelm) != usize(0)) {
         // run is guaranteed to have available space.
-        //         arena_run_tree_remove(&bin->runs, mapelm);
         if (var mlm ?= mapelm) {
             var run = (&arena_run_t)(mlm.bits & ~pagesize_mask);
+            bin.runs.remove(mlm);
             // #ifdef MALLOC_STATS
             if (MALLOC_STATS) {
                 bin.stats.reruns += 1;
@@ -2993,16 +3034,19 @@ inline fn isalloc(ptr: &u8) -> usize {
 // static inline void
 // arena_dalloc_small(arena_t *arena, arena_chunk_t *chunk, void *ptr, arena_chunk_map_t *mapelm) {
 inline fn arena_dalloc_small(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, mapelm: &arena_chunk_map_t) {
-    // TODO: This is next for implrmrntation...
+    // TODO: This is next for implementation...
     //     arena_run_t *run;
     //     arena_bin_t *bin;
     //     size_t size;
-    //     run = (arena_run_t *)(mapelm->bits & ~pagesize_mask);
-    //     assert(run->magic == ARENA_RUN_MAGIC);
-    //     bin = run->bin;
-    //     size = bin->reg_size;
-    //     if (opt_junk)
-    //         memset(ptr, 0x5a, size);
+    var run = (&arena_run_t)(mapelm.bits & ~(usize)(pagesize_mask));
+    if (MALLOC_DEBUG) {
+        // assert(run.magic == ARENA_RUN_MAGIC);
+    }
+    var bin = run.bin;
+    var size = bin.reg_size;
+    if (opt_junk) {
+        @memset(ptr, 0x5a, size);
+    }
     //     arena_run_reg_dalloc(run, bin, ptr, size);
     //     run->nfree++;
     //     if (run->nfree == bin->nregs) {
@@ -3055,10 +3099,10 @@ inline fn arena_dalloc_small(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, m
     //             arena_run_tree_insert(&bin->runs, run_mapelm);
     //         }
     //     }
-    // #ifdef MALLOC_STATS
-    //     arena->stats.allocated_small -= size;
-    //     arena->stats.ndalloc_small++;
-    // #endif
+    if (MALLOC_STATS) {
+        arena.stats.allocated_small -= size;
+        arena.stats.ndalloc_small += 1;
+    }
 }
 
 
@@ -3072,15 +3116,16 @@ fn arena_dalloc_large(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8) {
     //     if (opt_junk)
     // #endif
     //     {
-    //         size_t pageind = ((uintptr_t)ptr - (uintptr_t)chunk) >>
-    //             pagesize_2pow;
-    //         size_t size = chunk->map[pageind].bits & ~pagesize_mask;
+    const pageind = (usize(ptr) - usize(chunk)) >> pagesize_2pow;
+    const size = *(&(&chunk.map)[pageind].bits) & ~pagesize_mask;
     // #ifdef MALLOC_STATS
     //         if (opt_junk)
     // #endif
     //             memset(ptr, 0x5a, size);
     // #ifdef MALLOC_STATS
-    //         arena->stats.allocated_large -= size;
+    if (MALLOC_STATS) {
+        arena.stats.allocated_large -= size;
+    }
     // #endif
     //     }
     // #ifdef MALLOC_STATS
@@ -3104,7 +3149,6 @@ inline fn arena_dalloc(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8) {
     const pageind = ((usize(ptr) - usize(chunk)) >> pagesize_2pow);
     // TODO[#173]...
     var mapelm = &(&chunk.map)[pageind];
-    // this fails... investigate...
     assert((mapelm.bits & CHUNK_MAP_ALLOCATED) != 0);
     if ((mapelm.bits & CHUNK_MAP_LARGE) == 0) {
         // Small allocation.
@@ -4527,24 +4571,32 @@ pub fn _malloc_postfork() {
 fn testMallocInit() {
     @setFnTest(this, true);
     opt_print_stats = true;
+    MALLOC_STATS = true;
+    MALLOC_DEBUG = true;        // Need this for now
     malloc_init();
     assert(malloc_initialized == true);
-    var malls: [8]?&u8 = zeroes;
-    for (malls) |*m| {
-        *m = je_malloc(345);
-        if (var mm ?= *m) {
-            %%io.stdout.printf("ok\n");
-        } else {
-            %%io.stdout.printf("oh no\n");
+    var malls: [32]?&u8 = zeroes;
+    { var i = usize(0);
+        while (i < 512; i += 1) {
+            for (malls) |*m | {
+                    // woot, woot, large arenas (multiple of pagesize) apparently working..
+                    *m = je_malloc(4096);
+                    if (var mm ?= *m) {
+                        // %%io.stdout.printf("ok\n");
+                    } else {
+                        %%io.stdout.printf("oh no\n");
+                    }
+                }
+            %%malloc_print_stats();
+            for (malls) |*m| {
+                    if (var mm ?= *m) {
+                        // %%io.stdout.printf("freeing\n");
+                        je_free(mm);
+                        *m = (&u8)(usize(0));
+                    }
+                }
+            %%malloc_print_stats();
         }
     }
-    %%malloc_print_stats();
-    for (malls) |*m| {
-        if (var mm ?= *m) {
-            %%io.stdout.printf("ok\n");
-            je_free(mm);
-        }
-    }
-    %%malloc_print_stats();
     //@breakpoint();
 }
