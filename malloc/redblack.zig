@@ -125,6 +125,21 @@ pub struct rb_node(inline T: type)
         }
         return it;
     }
+    // #define	rbp_last(a_type, a_field, a_tree, a_root, r_node) do {		\
+    // for ((r_node) = (a_root);						\
+    //   rbp_right_get(a_type, a_field, (r_node)) != &(a_tree)->rbt_nil;	\
+    //   (r_node) = rbp_right_get(a_type, a_field, (r_node))) {		\
+    // }									\
+    // } while (0)
+    pub fn last(n: &Self, root: T, nilnode: T) -> T {
+        var it = root;
+        if (it == nilnode) return it;
+        while (it.link.right_get() != nilnode) {
+            it = it.link.right_get();
+        }
+        return it;
+    }
+
 
     pub inline fn init(n: &Self) {
         assert(usize(n) & 0x1 == 0);
@@ -228,7 +243,11 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
     }
 
     pub fn last(t: &Self) -> ?&T {
-        return null;            // TODO
+        const n = t.rbt_root.link.last(t.rbt_root, NULL_PTR(t.rbt_root));
+        if (n == NULL_PTR(n)) {
+            return null;
+        }
+        return n;
     }
 
     pub fn first(t: &Self) -> ?&T {

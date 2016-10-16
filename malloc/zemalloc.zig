@@ -1438,20 +1438,20 @@ fn stats_print(arena: &arena_t) -> %void {
     if (MALLOC_STATS) {
         var s: [UMAX2S_BUFSIZE]u8 = zeroes;
         var ss: [UMAX2S_BUFSIZE]u8 = zeroes;
-        %%_malloc_message("dirty:", umax2s(arena.ndirty, s), "", "");
-        %%_malloc_message(", sweeps:", umax2s(arena.stats.npurge, s),
-                          ", madvise:", umax2s(arena.stats.nmadvise, ss));
-        %%_malloc_message(", purged:", umax2s(arena.stats.purged, s), "\n", "");
-        %%_malloc_message("small:", umax2s(arena.stats.allocated_small, s),
-                          ", nmalloc:", umax2s(arena.stats.nmalloc_small, ss));
-        %%_malloc_message(", ndalloc:", umax2s(arena.stats.ndalloc_small, s),
+        %%_malloc_message("dirty=", umax2s(arena.ndirty, s), "", "");
+        %%_malloc_message(", sweeps=", umax2s(arena.stats.npurge, s),
+                          ", madvise=", umax2s(arena.stats.nmadvise, ss));
+        %%_malloc_message(", purged=", umax2s(arena.stats.purged, s), "\n", "");
+        %%_malloc_message("small=", umax2s(arena.stats.allocated_small, s),
+                          ", nmalloc=", umax2s(arena.stats.nmalloc_small, ss));
+        %%_malloc_message(", ndalloc=", umax2s(arena.stats.ndalloc_small, s),
                           "\n", "");
-        %%_malloc_message("large:", umax2s(arena.stats.allocated_large, s),
-                          ", nmalloc:", umax2s(arena.stats.nmalloc_large, ss));
-        %%_malloc_message(", ndalloc:", umax2s(arena.stats.ndalloc_large, s),
+        %%_malloc_message("large=", umax2s(arena.stats.allocated_large, s),
+                          ", nmalloc=", umax2s(arena.stats.nmalloc_large, ss));
+        %%_malloc_message(", ndalloc=", umax2s(arena.stats.ndalloc_large, s),
                           "\n", "");
         // totals
-        %%_malloc_message("mapped:", umax2s(arena.stats.mapped, s),
+        %%_malloc_message("mapped=", umax2s(arena.stats.mapped, s),
                           "\nbins:", "\n");
         {
             var i = usize(0);
@@ -2440,9 +2440,9 @@ fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
     }
     // Enforce opt_dirty_max.
     if (arena.ndirty > opt_dirty_max) {
-        if (@compileVar("is_test")) {
-            %%io.stdout.printf("must purge arena.\n");
-        }
+        // if (@compileVar("is_test")) {
+        //     %%io.stdout.printf("must purge arena.\n");
+        // }
         arena_purge(arena);
     }
 }
@@ -4570,7 +4570,7 @@ pub fn _malloc_postfork() {
 //******************************************************************************
 fn testMallocInit() {
     @setFnTest(this, true);
-    opt_print_stats = true;
+    opt_print_stats = true;     // set to false to go quiet
     MALLOC_STATS = true;
     MALLOC_DEBUG = true;        // Need this for now
     malloc_init();
@@ -4578,9 +4578,9 @@ fn testMallocInit() {
     var malls: [32]?&u8 = zeroes;
     { var i = usize(0);
         while (i < 512; i += 1) {
-            for (malls) |*m | {
+            for (malls) |*m, x| {
                     // woot, woot, large arenas (multiple of pagesize) apparently working..
-                    *m = je_malloc(4096);
+                    *m = je_malloc(pagesize * (1 + x));
                     if (var mm ?= *m) {
                         // %%io.stdout.printf("ok\n");
                     } else {
