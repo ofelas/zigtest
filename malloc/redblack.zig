@@ -182,23 +182,23 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
     const Self = this;
 
     rbt_root: &T,
-    pub s: stats,
+    // pub s: stats,
 
     struct path_node {
         node: &T,
         cmp: isize,
     }
 
-    struct stats {
-        remne: usize,
-        remeq: usize,
-        nofix: usize,
-        reend: usize,
-        single: usize,
-        eqleft: usize,
-        eqsingle: usize,
-        loop: usize,
-    }
+    // struct stats {
+    //     remne: usize,
+    //     remeq: usize,
+    //     nofix: usize,
+    //     reend: usize,
+    //     single: usize,
+    //     eqleft: usize,
+    //     eqsingle: usize,
+    //     loop: usize,
+    // }
 
     inline fn NULL_PTR(ptr: var) -> @typeOf(ptr) {
         return (@typeOf(ptr))(usize(0));
@@ -217,21 +217,21 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         return sz;
     }
 
-    pub fn dumpstats(t: &Self, stream: io.OutStream) -> %void {
-        %%printNamedHex("remeq=", t.s.remeq, stream);
-        %%printNamedHex("remne=", t.s.remne, stream);
-        %%printNamedHex("nofix=", t.s.nofix, stream);
-        %%printNamedHex("reend=", t.s.reend, stream);
-        %%printNamedHex("single=", t.s.single, stream);
-        %%printNamedHex("eqleft=", t.s.eqleft, stream);
-        %%printNamedHex("eqsingle=", t.s.eqsingle, stream);
-        %%printNamedHex("loop=", t.s.loop, stream);
-    }
+    // pub fn dumpstats(t: &Self, stream: io.OutStream) -> %void {
+    //     %%printNamedHex("remeq=", t.s.remeq, stream);
+    //     %%printNamedHex("remne=", t.s.remne, stream);
+    //     %%printNamedHex("nofix=", t.s.nofix, stream);
+    //     %%printNamedHex("reend=", t.s.reend, stream);
+    //     %%printNamedHex("single=", t.s.single, stream);
+    //     %%printNamedHex("eqleft=", t.s.eqleft, stream);
+    //     %%printNamedHex("eqsingle=", t.s.eqsingle, stream);
+    //     %%printNamedHex("loop=", t.s.loop, stream);
+    // }
 
     pub fn dump(t: &Self, n: &T) -> %void {
         if (n == NULL_PTR(n)) return;
         //%%io.stdout.printInt(usize, n.example);
-        %%io.stdout.printf("\n");
+        %%printNamedHex("NODE=", usize(n), io.stdout);
         var nn = n.link.left_get();
         if (nn != NULL_PTR(nn)) {
             %%t.dump(nn);
@@ -260,8 +260,8 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
 
     pub fn init(t: &Self) {
         t.rbt_root = NULL_PTR(t.rbt_root);
-        t.s = stats{.remne = 0, .remeq = 0, .nofix = 0, .single = 0, .reend = 0,
-                    .eqleft = 0, .eqsingle = 0, .loop = 0};
+        // t.s = stats{.remne = 0, .remeq = 0, .nofix = 0, .single = 0, .reend = 0,
+        //             .eqleft = 0, .eqsingle = 0, .loop = 0};
     }
 
     pub inline fn empty(t: &Self) -> bool {
@@ -417,8 +417,8 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         var ix = usize(0);
         var nix = usize(0);
         if (t.rbt_root == NULL) return; // we get the root messed up...
+        assert(t.rbt_root != NULL);
         path[ix].node = t.rbt_root;
-        //%%printNamedHex("root=", usize(t.rbt_root), io.stdout);
         // for (pathp = path; pathp->node != NULL; pathp++)
         // (ix < (path.len - 1)) && 
         while ((path[ix].node != NULL)) {
@@ -468,7 +468,7 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         if (path[ix].node != node) {
             // %%io.stdout.printf("path[ix].node != node\n");
             // %%printNamedHex("nodep=", usize(nodep.node), io.stdout);
-            t.s.remne += 1;
+            // t.s.remne += 1;
             // Swap node with its successor.
             //     bool tred = rbtn_red_get(a_type, a_field, pathp->node);
             const tred = path[ix].node.link.red_get();
@@ -505,7 +505,7 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
             }
         } else {
             //%%io.stdout.printf("path[ix].node == node\n");
-            t.s.remeq += 1;
+            // t.s.remeq += 1;
             //     a_type *left = rbtn_left_get(a_type, a_field, node);
             var left = node.link.left_get();
             if (left != NULL) {
@@ -525,19 +525,19 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
                         path[ix - 1].node.link.right_set(left);
                     }
                 }
-                t.s.eqleft += 1;
+                // t.s.eqleft += 1;
                 return;
             } else if (ix == 0) {
                 // The tree only contained one node.
                 t.rbt_root = NULL;
-                t.s.eqsingle += 1;
+                // t.s.eqsingle += 1;
                 return;
             }
         }
         if (path[ix].node.link.red_get()) {
             // Prune red node, which requires no fixup.
             //%%printNamedHex("path[ix]=", usize(path[ix].node.link.rbn_right_red), io.stdout);
-            t.s.nofix += 1;
+            // t.s.nofix += 1;
             //%%io.stdout.printf("Prune red node, which requires no fixup\n");
             assert(path[ix - 1].cmp < 0);
             // var it = usize(0);
@@ -554,7 +554,7 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         path[ix].node = NULL;
         ix -%= 1;
         // for (pathp--; (uintptr_t)pathp >= (uintptr_t)path; pathp--) {
-        t.s.loop += 1;
+        // t.s.loop += 1;
         while ((ix >= 0) && (ix < (path.len - 1)) && (path[ix].node != NULL); ix -%= 1) {
             assert(path[ix].cmp != 0);
             if (path[ix].cmp < 0) {
@@ -828,7 +828,7 @@ pub struct rb_tree(inline T: type, inline eql: fn(a: &T, b: &T)->isize) {
         // %%printNamedHex("at end ix=", ix, io.stdout);
         if (ix >= path.len) ix +%= 1;
         t.rbt_root = path[ix].node;
-        t.s.reend += 1;
+        // t.s.reend += 1;
         // hmm
         assert(!t.rbt_root.link.red_get());
     }
