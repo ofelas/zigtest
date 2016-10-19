@@ -1,121 +1,118 @@
-// /* From https://github.com/openwebos/jemalloc */
-// /*-
-//  * Copyright (C) 2008 Jason Evans <jasone@FreeBSD.org>.
-//  * Copyright (c) 2008-2013 LG Electronics, Inc.
-//  * All rights reserved.
-//  *
-//  * Redistribution and use in source and binary forms, with or without
-//  * modification, are permitted provided that the following conditions
-//  * are met:
-//  * 1. Redistributions of source code must retain the above copyright
-//  *    notice(s), this list of conditions and the following disclaimer as
-//  *    the first lines of this file unmodified other than the possible
-//  *    addition of one or more copyright notices.
-//  * 2. Redistributions in binary form must reproduce the above copyright
-//  *    notice(s), this list of conditions and the following disclaimer in
-//  *    the documentation and/or other materials provided with the
-//  *    distribution.
-//  *
-//  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER(S) ``AS IS'' AND ANY
-//  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-//  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-//  * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) BE
-//  * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-//  * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-//  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
-//  * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-//  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
-//  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-//  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//  *
-//  *******************************************************************************
-//  *
-//  * This allocator implementation is designed to provide scalable performance
-//  * for multi-threaded programs on multi-processor systems.  The following
-//  * features are included for this purpose:
-//  *
-//  *   + Multiple arenas are used if there are multiple CPUs, which reduces lock
-//  *     contention and cache sloshing.
-//  *
-//  *   + Thread-specific caching is used if there are multiple threads, which
-//  *     reduces the amount of locking.
-//  *
-//  *   + Cache line sharing between arenas is avoided for internal data
-//  *     structures.
-//  *
-//  *   + Memory is managed in chunks and runs (chunks can be split into runs),
-//  *     rather than as individual pages.  This provides a constant-time
-//  *     mechanism for associating allocations with particular arenas.
-//  *
-//  * Allocation requests are rounded up to the nearest size class, and no record
-//  * of the original request size is maintained.  Allocations are broken into
-//  * categories according to size class.  Assuming runtime defaults, 4 kB pages
-//  * and a 16 byte quantum on a 32-bit system, the size classes in each category
-//  * are as follows:
-//  *
-//  *   |=======================================|
-//  *   | Category | Subcategory      |    Size |
-//  *   |=======================================|
-//  *   | Small    | Tiny             |       2 |
-//  *   |          |                  |       4 |
-//  *   |          |                  |       8 |
-//  *   |          |------------------+---------|
-//  *   |          | Quantum-spaced   |      16 |
-//  *   |          |                  |      32 |
-//  *   |          |                  |      48 |
-//  *   |          |                  |     ... |
-//  *   |          |                  |      96 |
-//  *   |          |                  |     112 |
-//  *   |          |                  |     128 |
-//  *   |          |------------------+---------|
-//  *   |          | Cacheline-spaced |     192 |
-//  *   |          |                  |     256 |
-//  *   |          |                  |     320 |
-//  *   |          |                  |     384 |
-//  *   |          |                  |     448 |
-//  *   |          |                  |     512 |
-//  *   |          |------------------+---------|
-//  *   |          | Sub-page         |     760 |
-//  *   |          |                  |    1024 |
-//  *   |          |                  |    1280 |
-//  *   |          |                  |     ... |
-//  *   |          |                  |    3328 |
-//  *   |          |                  |    3584 |
-//  *   |          |                  |    3840 |
-//  *   |=======================================|
-//  *   | Large                       |    4 kB |
-//  *   |                             |    8 kB |
-//  *   |                             |   12 kB |
-//  *   |                             |     ... |
-//  *   |                             | 1012 kB |
-//  *   |                             | 1016 kB |
-//  *   |                             | 1020 kB |
-//  *   |=======================================|
-//  *   | Huge                        |    1 MB |
-//  *   |                             |    2 MB |
-//  *   |                             |    3 MB |
-//  *   |                             |     ... |
-//  *   |=======================================|
-//  *
-//  * A different mechanism is used for each category:
-//  *
-//  *   Small : Each size class is segregated into its own set of runs.  Each run
-//  *           maintains a bitmap of which regions are free/allocated.
-//  *
-//  *   Large : Each allocation is backed by a dedicated run.  Metadata are stored
-//  *           in the associated arena chunk header maps.
-//  *
-//  *   Huge : Each allocation is backed by a dedicated contiguous set of chunks.
-//  *          Metadata are stored in a separate red-black tree.
-//  *
-//  *******************************************************************************
-//  */
+// From https://github.com/openwebos/jemalloc
+//
+// Copyright (C) 2008 Jason Evans <jasone@FreeBSD.org>.
+// Copyright (c) 2008-2013 LG Electronics, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice(s), this list of conditions and the following disclaimer as
+//    the first lines of this file unmodified other than the possible
+//    addition of one or more copyright notices.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice(s), this list of conditions and the following disclaimer in
+//    the documentation and/or other materials provided with the
+//    distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER(S) ``AS IS'' AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+// PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+// BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+// WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+// OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+// EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+// *****************************************************************************
+//
+// This allocator implementation is designed to provide scalable performance
+// for multi-threaded programs on multi-processor systems.  The following
+// features are included for this purpose:
+//
+//   + Multiple arenas are used if there are multiple CPUs, which reduces lock
+//     contention and cache sloshing.
+//
+//   + Thread-specific caching is used if there are multiple threads, which
+//     reduces the amount of locking.
+//
+//   + Cache line sharing between arenas is avoided for internal data
+//     structures.
+//
+//   + Memory is managed in chunks and runs (chunks can be split into runs),
+//     rather than as individual pages.  This provides a constant-time
+//     mechanism for associating allocations with particular arenas.
+//
+// Allocation requests are rounded up to the nearest size class, and no record
+// of the original request size is maintained.  Allocations are broken into
+// categories according to size class.  Assuming runtime defaults, 4 kB pages
+// and a 16 byte quantum on a 32-bit system, the size classes in each category
+// are as follows:
+//
+//   |=======================================|
+//   | Category | Subcategory      |    Size |
+//   |=======================================|
+//   | Small    | Tiny             |       2 |
+//   |          |                  |       4 |
+//   |          |                  |       8 |
+//   |          |------------------+---------|
+//   |          | Quantum-spaced   |      16 |
+//   |          |                  |      32 |
+//   |          |                  |      48 |
+//   |          |                  |     ... |
+//   |          |                  |      96 |
+//   |          |                  |     112 |
+//   |          |                  |     128 |
+//   |          |------------------+---------|
+//   |          | Cacheline-spaced |     192 |
+//   |          |                  |     256 |
+//   |          |                  |     320 |
+//   |          |                  |     384 |
+//   |          |                  |     448 |
+//   |          |                  |     512 |
+//   |          |------------------+---------|
+//   |          | Sub-page         |     760 |
+//   |          |                  |    1024 |
+//   |          |                  |    1280 |
+//   |          |                  |     ... |
+//   |          |                  |    3328 |
+//   |          |                  |    3584 |
+//   |          |                  |    3840 |
+//   |=======================================|
+//   | Large                       |    4 kB |
+//   |                             |    8 kB |
+//   |                             |   12 kB |
+//   |                             |     ... |
+//   |                             | 1012 kB |
+//   |                             | 1016 kB |
+//   |                             | 1020 kB |
+//   |=======================================|
+//   | Huge                        |    1 MB |
+//   |                             |    2 MB |
+//   |                             |    3 MB |
+//   |                             |     ... |
+//   |=======================================|
+//
+// A different mechanism is used for each category:
+//
+//   Small : Each size class is segregated into its own set of runs.  Each run
+//           maintains a bitmap of which regions are free/allocated.
+//
+//   Large : Each allocation is backed by a dedicated run.  Metadata are stored
+//           in the associated arena chunk header maps.
+//
+//   Huge : Each allocation is backed by a dedicated contiguous set of chunks.
+//          Metadata are stored in a separate red-black tree.
+//
+// *****************************************************************************
 
-// /*
-//  * Set to false if single-threaded.  Even better, rip out all of the code that
-//  * doesn't get used if __isthreaded is false, so that libpthread isn't
-//  * necessary.
-//  */
+// Set to false if single-threaded.  Even better, rip out all of the code that
+// doesn't get used if __isthreaded is false, so that libpthread isn't
+// necessary.
 const system = @import("std").linux;
 
 const std = @import("std");
@@ -154,7 +151,7 @@ var MALLOC_STATS = true; //  if (MALLOC_PRODUCTION == false) true else false;
 
 // MALLOC_TINY enables support for tiny objects, which are smaller
 // than one quantum.
-var MALLOC_TINY = true;
+var MALLOC_TINY = false;
 
 // MALLOC_MAG enables a magazine-based thread-specific caching layer
 // for small objects.  This makes it possible to allocate/deallocate
@@ -298,7 +295,7 @@ const SUBPAGE = (1 << SUBPAGE_2POW);
 const SUBPAGE_MASK = (SUBPAGE - 1);
 
 //* Smallest size class to support. */
-var TINY_MIN_2POW = usize(1); // if (MALLOC_TINY) 1 else 0;
+const TINY_MIN_2POW = usize(1); // if (MALLOC_TINY) 1 else 0;
 // if (MALLOC_TINY) {
 //     TINY_MIN_2POW = 1;
 // }
@@ -370,9 +367,7 @@ const BALANCE_THRESHOLD_DEFAULT = usize(0); //if (MALLOC_BALANCE) (1 << (SPIN_LI
 // #endif
 
 inline fn ffs(v: var) -> @typeOf(v) {
-    //  int ret = sizeof(unsigned long) * CHAR_BIT - 1;
-    //	return x ? ret - __builtin_clzl(x) : ret;
-    return ((@sizeOf(@typeOf(v)) * 8) - 1) -  @clz(@typeOf(v), v);
+    return (@sizeOf(@typeOf(v)) * 8) -  @clz(@typeOf(v), v);
 }
 
 
@@ -491,18 +486,62 @@ const arena_run_tree_t = rb.rb_tree(arena_chunk_map_t, arena_run_comp);
 //* Arena chunk header. */
 //typedef struct arena_chunk_s arena_chunk_t;
 struct arena_chunk_t {
-        // Arena that owns the chunk.
-        arena: &arena_t,
+    // Arena that owns the chunk.
+    arena: &arena_t,
 
-        // Linkage for the arena's chunks_dirty tree.
-        link: rb.rb_node(&arena_chunk_t),
+    // Linkage for the arena's chunks_dirty tree.
+    link: rb.rb_node(&arena_chunk_t),
 
-        // Number of dirty pages.
-        ndirty: usize,
+    // Number of dirty pages.
+    ndirty: usize,
 
-        //* Map of pages within chunk that keeps track of free/large/small. */
-        // TODO[zig] map: [1]arena_chunk_map_t, //* Dynamically sized. */
-        map: arena_chunk_map_t, //* Dynamically sized. */
+    //* Map of pages within chunk that keeps track of free/large/small. */
+    // TODO[zig] map: [1]arena_chunk_map_t, //* Dynamically sized. */
+    nmaps: usize,
+    map: arena_chunk_map_t, // Dynamically sized.
+
+    fn dump(ac: &arena_chunk_t) -> %void {
+        var s: [UMAX2S_BUFSIZE]u8 = zeroes;
+        %%_malloc_message("arena_chunk_t: ", "ndirty=", umax2s(ac.ndirty, s), "");
+        %%_malloc_message("arena=", umax2s(usize(ac.arena), s), "\n", "");
+        %%_malloc_message("nmaps:", umax2s(ac.nmaps, s), "\n", "");
+        var i = usize(0);
+        while (i < ac.nmaps; i += 1) {
+            %%_malloc_message("map[", umax2s(i, s), "] ", "");
+            %%_malloc_message("bits=", umaxx2s(*(&(&ac.map)[i].bits), s), "\n", "");
+        }
+    }
+
+    fn getmap(ac: &arena_chunk_t, idx: usize) -> &arena_chunk_map_t {
+        assert(idx < ac.nmaps);
+        return &(&ac.map)[idx];
+    }
+
+    fn getsize(ac: &arena_chunk_t, idx: usize) -> usize {
+        assert(idx < ac.nmaps);
+        return *(&(&ac.map)[idx].bits) & ~pagesize_mask;
+    }
+
+    fn getbits(ac: &arena_chunk_t, idx: usize) -> usize {
+        assert(idx < ac.nmaps);
+        return *(&(&ac.map)[idx].bits);
+    }
+
+    fn setbits(ac: &arena_chunk_t, idx: usize, bits: usize) {
+        assert(idx < ac.nmaps);
+        // if (idx == 7 || idx == 8) {
+        //     @breakpoint();
+        // }
+        *(&(&ac.map)[idx].bits) = bits;
+    }
+
+    fn clearbits(ac: &arena_chunk_t, idx: usize, bits: usize) {
+        assert(idx < ac.nmaps);
+        // if (idx == 9 || idx == 510 || idx == 511) {
+        //     @breakpoint();
+        // }
+        *(&(&ac.map)[idx].bits) &= ~bits;
+    }
 }
 
 //typedef rb_tree(arena_chunk_t) arena_chunk_tree_t;
@@ -623,7 +662,6 @@ struct arena_t {
     //       35  | 1024 |
     //       36  | 2048 |
     //   --------+------+
-    // TODO: Forced it to 37, should be dynamically sized, currently not in Zig
     // bins:    [37]arena_bin_t, // Dynamically sized
     bins:    arena_bin_t, // Dynamically sized
 }
@@ -654,7 +692,7 @@ var ncbins = usize(0); // Number of cacheline-spaced bins.
 var nsbins = usize(0); // Number of subpage-spaced bins.
 var nbins  = usize(0);
 // #ifdef MALLOC_TINY
-// #  define               tspace_max      ((size_t)(QUANTUM >> 1))
+const  tspace_max = (QUANTUM >> 1);
 // #endif
 var qspace_min = QUANTUM;
 var qspace_max = usize(0);
@@ -679,18 +717,8 @@ var size2bin: []u8 = undefined;
 // #define S2B_128(i)      S2B_64(i) S2B_64(i)
 // #define S2B_256(i)      S2B_128(i) S2B_128(i)
 
-fn S2B_1(i: u8) -> u8 { i }
-fn S2B_2(i: u8) -> u8 { S2B_1(i) + S2B_1(i)}
-fn S2B_4(i: u8) -> u8 { S2B_2(i) + S2B_2(i)}
-fn S2B_8(i: u8) -> u8 { S2B_4(i) + S2B_4(i)}
-fn S2B_16(i: u8) -> u8 { S2B_8(i) + S2B_8(i)}
-fn S2B_32(i: u8) -> u8 { S2B_16(i) + S2B_16(i)}
-fn S2B_64(i: u8) -> u8 { S2B_32(i) + S2B_32(i)}
-fn S2B_128(i: u8) -> u8 { S2B_64(i) + S2B_64(i)}
-fn S2B_256(i: u8) -> u8 { S2B_128(i) + S2B_128(i)}
-
 const S2B_QMIN = u8(0);
-const S2B_CMIN = (S2B_QMIN + 16);
+const S2B_CMIN = (S2B_QMIN + 8);
 const S2B_SMIN = (S2B_CMIN + 6);
 var const_size2bin: [(1 << PAGESIZE_2POW) - 255]u8 = zeroes;
 
@@ -700,10 +728,38 @@ fn prep_size2bin() {
     var ix = usize(0);
     const_size2bin[ix] = 0xff;
     ix += 1;
+    // #  ifdef MALLOC_TINY
+    //         S2B_2(0)                /*    2 */
+    //         S2B_2(1)                /*    4 */
+    //         S2B_4(2)                /*    8 */
+    //         S2B_8(3)                /*   16 */
+    // #    define S2B_QMIN 3
+    if (MALLOC_TINY) {
+        {var i = usize(0);
+            while(i < 2; {i += 1; ix += 1}) {
+                const_size2bin[ix] = 0;
+            }
+        };
+        {var i = usize(0);
+            while(i < 2; {i += 1; ix += 1}) {
+                const_size2bin[ix] = 1;
+            }
+        };
+        {var i = usize(0);
+            while(i < 4; {i += 1; ix += 1}) {
+                const_size2bin[ix] = 2;
+            }
+        };
+        {var i = usize(0);
+            while(i < 8; {i += 1; ix += 1}) {
+                const_size2bin[ix] = 3;
+            }
+        };
+    }
     // S2B_16(0),                  //   16
     {var i = usize(0);
         while(i < 16; {i += 1; ix += 1}) {
-            const_size2bin[ix] = S2B_QMIN;
+            const_size2bin[ix] = 0;
         }
     };
     // S2B_16(S2B_QMIN + 1),       //   32
@@ -715,7 +771,7 @@ fn prep_size2bin() {
     // S2B_16(S2B_QMIN + 7),       //  128
     {var j = u8(1);
         while (j < 8; j += 1) {
-            var i = usize(0); 
+            var i = usize(0);
             while(i < 16; {i += 1; ix += 1}) {
                 const_size2bin[ix] = S2B_QMIN + j;
             }
@@ -750,7 +806,7 @@ fn prep_size2bin() {
     // S2B_256(S2B_SMIN + 12),     // 3840
     {var j = u8(0);
         while (j < 13; j += 1) {
-            var i = usize(0); 
+            var i = usize(0);
             while(i < 256; {i += 1; ix += 1}) {
                 const_size2bin[ix] = S2B_SMIN + j;
             }
@@ -978,83 +1034,9 @@ var opt_mmap = true;
 // #define UTRACE(a, b, c)
 // #endif
 
-// /******************************************************************************/
-// /*
-//  * Begin function prototypes for non-inline static functions.
-//  */
-
-// static bool     malloc_mutex_init(malloc_mutex_t *mutex);
-// static bool     malloc_spin_init(pthread_mutex_t *lock);
-// static void     wrtmessage(const char *p1, const char *p2, const char *p3,
-//                 const char *p4);
-// #ifdef MALLOC_STATS
-// static void     malloc_printf(const char *format, ...);
-// #endif
-// static char     *umax2s(uintmax_t x, char *s);
-// static bool     base_pages_alloc_mmap(size_t minsize);
-// static bool     base_pages_alloc(size_t minsize);
-// static void     *base_alloc(size_t size);
-// static extent_node_t *base_node_alloc(void);
-// static void     base_node_dealloc(extent_node_t *node);
-// #ifdef MALLOC_STATS
-// static void     stats_print(arena_t *arena);
-// #endif
-// static void     *pages_map(void *addr, size_t size);
-// static void     pages_unmap(void *addr, size_t size);
-// static void     *chunk_alloc_mmap(size_t size);
-// static void     *chunk_alloc(size_t size, bool zero);
-// static void     chunk_dealloc_mmap(void *chunk, size_t size);
-// static void     chunk_dealloc(void *chunk, size_t size);
-// #ifndef NO_TLS
-// static arena_t  *choose_arena_hard(void);
-// #endif
-// static void     arena_run_split(arena_t *arena, arena_run_t *run, size_t size,
-//     bool large, bool zero);
-// static arena_chunk_t *arena_chunk_alloc(arena_t *arena);
-// static void     arena_chunk_dealloc(arena_t *arena, arena_chunk_t *chunk);
-// static arena_run_t *arena_run_alloc(arena_t *arena, size_t size, bool large,
-//     bool zero);
-// static void     arena_purge(arena_t *arena);
-// static void     arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty);
-// static void     arena_run_trim_head(arena_t *arena, arena_chunk_t *chunk,
-//     arena_run_t *run, size_t oldsize, size_t newsize);
-// static void     arena_run_trim_tail(arena_t *arena, arena_chunk_t *chunk,
-//     arena_run_t *run, size_t oldsize, size_t newsize, bool dirty);
-// static arena_run_t *arena_bin_nonfull_run_get(arena_t *arena, arena_bin_t *bin);
-// static void     *arena_bin_malloc_hard(arena_t *arena, arena_bin_t *bin);
-// static size_t   arena_bin_run_size_calc(arena_bin_t *bin, size_t min_run_size);
-// #ifdef MALLOC_BALANCE
-// static void     arena_lock_balance_hard(arena_t *arena);
-// #endif
-// static void     *arena_malloc_large(arena_t *arena, size_t size, bool zero);
-// static void     *arena_palloc(arena_t *arena, size_t alignment, size_t size,
-//     size_t alloc_size);
-// static size_t   arena_salloc(const void *ptr);
-// static void     arena_dalloc_large(arena_t *arena, arena_chunk_t *chunk,
-//     void *ptr);
-// static void     arena_ralloc_large_shrink(arena_t *arena, arena_chunk_t *chunk,
-//     void *ptr, size_t size, size_t oldsize);
-// static bool     arena_ralloc_large_grow(arena_t *arena, arena_chunk_t *chunk,
-//     void *ptr, size_t size, size_t oldsize);
-// static bool     arena_ralloc_large(void *ptr, size_t size, size_t oldsize);
-// static void     *arena_ralloc(void *ptr, size_t size, size_t oldsize);
-// static bool     arena_new(arena_t *arena);
-// static arena_t  *arenas_extend(unsigned ind);
-// static void     *huge_malloc(size_t size, bool zero);
-// static void     *huge_palloc(size_t alignment, size_t size);
-// static void     *huge_ralloc(void *ptr, size_t size, size_t oldsize);
-// static void     huge_dalloc(void *ptr);
-// static void     malloc_print_stats(void);
-// #ifdef MALLOC_DEBUG
-// static void     size2bin_validate(void);
-// #endif
-// static bool     size2bin_init(void);
-// static bool     size2bin_init_hard(void);
-// static unsigned malloc_ncpus(void);
-// static bool     malloc_init_hard(void);
-// void            _malloc_prefork(void);
-// void            _malloc_postfork(void);
-
+//******************************************************************************
+// Begin function prototypes for non-inline static functions.
+// echoes from the past
 // End function prototypes.
 //******************************************************************************
 // We don't want to depend on vsnprintf() for production builds, since that can
@@ -1070,6 +1052,19 @@ fn umax2s(v: var, s: []u8) -> []u8{
         i -= 1;
         s[i] = "0123456789"[x % 10];
         x /= 10;
+        if (x == 0) break;
+    }
+    return s[i...];
+}
+
+fn umaxx2s(v: var, s: []u8) -> []u8{
+    var i = s.len - 1;
+    var x = v;
+    s[i] = 0;
+    while (true) {
+        i -= 1;
+        s[i] = "0123456789abcdef"[x % 16];
+        x /= 16;
         if (x == 0) break;
     }
     return s[i...];
@@ -1273,6 +1268,7 @@ const PAGE_CEILING = zeutils.PAGE_CEILING;
 const getPageSize = zeutils.getPageSize;
 const getNumCpus = zeutils.getNumCpus;
 const next_power_of_two = zeutils.next_power_of_two;
+const pow2_ceil = zeutils.pow2_ceil;
 
 // #ifdef MALLOC_BALANCE
 // Use a simple linear congruential pseudo-random number generator:
@@ -1482,6 +1478,10 @@ fn stats_print(arena: &arena_t) -> %void {
                     %%_malloc_message(", nrequests=", umax2s(st.nrequests, s), ", reruns=", umax2s(st.reruns, ss));
                     %%_malloc_message(", highruns=", umax2s(st.highruns, s), ", curruns=", umax2s(st.curruns, ss));
                     %%_malloc_message("\n", "", "", "");
+
+                    // dump()?
+                    %%_malloc_message("dump:\n", "", "", "");
+                    %%bin.runs.dump(bin.runs.rbt_root);
                 }
              }
             if (gap_start != usize(@maxValue(i32))) {
@@ -1923,7 +1923,7 @@ fn arena_avail_comp(a: &arena_chunk_map_t, b: &arena_chunk_map_t) -> isize {
 //* Wrap red-black tree macros in functions. */
 // rb_wrap(static, arena_avail_tree_, arena_avail_tree_t, arena_chunk_map_t, link, arena_avail_comp)
 
-var arent_avail_tree: arena_avail_tree_t = zeroes;
+//var arena_avail_tree: arena_avail_tree_t = zeroes;
 
 inline fn arena_run_reg_alloc(run: &arena_run_t, bin: &arena_bin_t) -> ?&u8 {
     var ret: ?&u8 = null;
@@ -1981,7 +1981,8 @@ inline fn arena_run_reg_alloc(run: &arena_run_t, bin: &arena_bin_t) -> ?&u8 {
         }
     }
     // Not reached.
-    assert(true);
+    // assert(false);
+    %%abort();
     return null;
 }
 
@@ -1995,6 +1996,18 @@ const log2_table = []u8 {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7
 };
+
+// #define SIZE_INV_SHIFT 21
+const SIZE_INV_SHIFT = usize(21);
+fn QSIZE_INV(s: usize) -> usize {
+    return (((1 << SIZE_INV_SHIFT) / (s << QUANTUM_2POW)) + 1);
+}
+fn CSIZE_INV(s: usize) -> usize {
+    return (((1 << SIZE_INV_SHIFT) / (s << CACHELINE_2POW)) + 1);
+}
+fn SSIZE_INV(s: usize) -> usize {
+    return (((1 << SIZE_INV_SHIFT) / (s << SUBPAGE_2POW)) + 1);
+}
 
 inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, size: usize) {
     var regind = usize(0);
@@ -2014,7 +2027,6 @@ inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, s
         // [1..128] range.
         //
         // (x / divisor) becomes (x >> log2_table[divisor - 1]).
-
         if (size <= 128) {
             regind = (diff >> log2_table[size - 1]);
         } else if (size <= 32768) {
@@ -2036,72 +2048,60 @@ inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, s
         // We can omit the first three elements, because we never
         // divide by 0, and QUANTUM and 2*QUANTUM are both powers of
         // two, which are handled above.
-// #define SIZE_INV_SHIFT 21
-// #define QSIZE_INV(s) (((1 << SIZE_INV_SHIFT) / (s << QUANTUM_2POW)) + 1)
-//         static const unsigned qsize_invs[] = {
-//             QSIZE_INV(3),
-//             QSIZE_INV(4), QSIZE_INV(5), QSIZE_INV(6), QSIZE_INV(7)
-// #if (QUANTUM_2POW < 4)
-//             ,
-//             QSIZE_INV(8), QSIZE_INV(9), QSIZE_INV(10), QSIZE_INV(11),
-//             QSIZE_INV(12),QSIZE_INV(13), QSIZE_INV(14), QSIZE_INV(15)
-// #endif
-//         };
-//         assert(QUANTUM * (((sizeof(qsize_invs)) / sizeof(unsigned)) + 3)
-//                >= (1 << QSPACE_MAX_2POW_DEFAULT));
-
-//         if (size <= (((sizeof(qsize_invs) / sizeof(unsigned)) + 2) <<
-//                      QUANTUM_2POW)) {
-//             regind = qsize_invs[(size >> QUANTUM_2POW) - 3] * diff;
-//             regind >>= SIZE_INV_SHIFT;
-//         } else
-//             regind = diff / size;
-// #undef QSIZE_INV
-//     } else if (size < cspace_max) {
-// #define CSIZE_INV(s) (((1 << SIZE_INV_SHIFT) / (s << CACHELINE_2POW)) + 1)
-//         static const unsigned csize_invs[] = {
-//             CSIZE_INV(3),
-//             CSIZE_INV(4), CSIZE_INV(5), CSIZE_INV(6), CSIZE_INV(7)
-//         };
-//         assert(CACHELINE * (((sizeof(csize_invs)) / sizeof(unsigned)) +
-//                             3) >= (1 << CSPACE_MAX_2POW_DEFAULT));
-
-//         if (size <= (((sizeof(csize_invs) / sizeof(unsigned)) + 2) <<
-//                      CACHELINE_2POW)) {
-//             regind = csize_invs[(size >> CACHELINE_2POW) - 3] *
-//                 diff;
-//             regind >>= SIZE_INV_SHIFT;
-//         } else
-//             regind = diff / size;
-// #undef CSIZE_INV
-//     } else {
-// #define SSIZE_INV(s) (((1 << SIZE_INV_SHIFT) / (s << SUBPAGE_2POW)) + 1)
-//         static const unsigned ssize_invs[] = {
-//             SSIZE_INV(3),
-//             SSIZE_INV(4), SSIZE_INV(5), SSIZE_INV(6), SSIZE_INV(7),
-//             SSIZE_INV(8), SSIZE_INV(9), SSIZE_INV(10), SSIZE_INV(11),
-//             SSIZE_INV(12), SSIZE_INV(13), SSIZE_INV(14), SSIZE_INV(15)
-// #if (PAGESIZE_2POW == 13)
-//             ,
-//             SSIZE_INV(16), SSIZE_INV(17), SSIZE_INV(18), SSIZE_INV(19),
-//             SSIZE_INV(20), SSIZE_INV(21), SSIZE_INV(22), SSIZE_INV(23),
-//             SSIZE_INV(24), SSIZE_INV(25), SSIZE_INV(26), SSIZE_INV(27),
-//             SSIZE_INV(28), SSIZE_INV(29), SSIZE_INV(29), SSIZE_INV(30)
-// #endif
-//         };
-//         assert(SUBPAGE * (((sizeof(ssize_invs)) / sizeof(unsigned)) + 3)
-//                >= (1 << PAGESIZE_2POW));
-
-//         if (size < (((sizeof(ssize_invs) / sizeof(unsigned)) + 2) <<
-//                     SUBPAGE_2POW)) {
-//             regind = ssize_invs[(size >> SUBPAGE_2POW) - 3] * diff;
-//             regind >>= SIZE_INV_SHIFT;
-//         } else
-//             regind = diff / size;
-// #undef SSIZE_INV
-//     }
-// #undef SIZE_INV_SHIFT
+        const qsize_invs = []usize {
+                     QSIZE_INV(3),
+                     QSIZE_INV(4), QSIZE_INV(5), QSIZE_INV(6), QSIZE_INV(7),
+                     // if (QUANTUM_2POW < 4) {
+                     //     QSIZE_INV(8), QSIZE_INV(9), QSIZE_INV(10), QSIZE_INV(11),
+                     //     QSIZE_INV(12),QSIZE_INV(13), QSIZE_INV(14), QSIZE_INV(15)
+                     // }
+        };
+        // assert(usize(QUANTUM * ((qsize_invs.len / (@sizeOf(usize)) + 3)) >= usize(1 << QSPACE_MAX_2POW_DEFAULT));
+        if (size <= (((qsize_invs.len / @sizeOf(usize)) + 2) << QUANTUM_2POW)) {
+            regind = qsize_invs[(size >> QUANTUM_2POW) - 3] * diff;
+            regind >>= SIZE_INV_SHIFT;
+        } else {
+            regind = diff / size;
+        }
+        // #undef QSIZE_INV
+    } else if (size < cspace_max) {
+        const csize_invs = []usize {
+            CSIZE_INV(3), CSIZE_INV(4), CSIZE_INV(5), CSIZE_INV(6), CSIZE_INV(7)
+        };
+        // assert(CACHELINE * (((sizeof(csize_invs)) / sizeof(unsigned)) +
+        //                     3) >= (1 << CSPACE_MAX_2POW_DEFAULT));
+        if (size <= (((csize_invs.len / @sizeOf(usize)) + 2) << CACHELINE_2POW)) {
+            regind = csize_invs[(size >> CACHELINE_2POW) - 3] * diff;
+            regind >>= SIZE_INV_SHIFT;
+        } else {
+            regind = diff / size;
+        }
+        // #undef CSIZE_INV
+    } else {
+        const ssize_invs = []usize {
+            SSIZE_INV(3),
+            SSIZE_INV(4), SSIZE_INV(5), SSIZE_INV(6), SSIZE_INV(7),
+            SSIZE_INV(8), SSIZE_INV(9), SSIZE_INV(10), SSIZE_INV(11),
+            SSIZE_INV(12), SSIZE_INV(13), SSIZE_INV(14), SSIZE_INV(15)
+        // #if (PAGESIZE_2POW == 13)
+        // ,
+        // SSIZE_INV(16), SSIZE_INV(17), SSIZE_INV(18), SSIZE_INV(19),
+        // SSIZE_INV(20), SSIZE_INV(21), SSIZE_INV(22), SSIZE_INV(23),
+        // SSIZE_INV(24), SSIZE_INV(25), SSIZE_INV(26), SSIZE_INV(27),
+        // SSIZE_INV(28), SSIZE_INV(29), SSIZE_INV(29), SSIZE_INV(30)
+        // #endif
+        };
+        //         assert(SUBPAGE * (((sizeof(ssize_invs)) / sizeof(unsigned)) + 3)
+        //                >= (1 << PAGESIZE_2POW));
+        if (size < (((ssize_invs.len / @sizeOf(@typeOf(ssize_invs[0]))) + 2) << SUBPAGE_2POW)) {
+            regind = ssize_invs[(size >> SUBPAGE_2POW) - 3] * diff;
+            regind >>= SIZE_INV_SHIFT;
+        } else {
+            regind = diff / size;
+        }
+        // #undef SSIZE_INV
     }
+    // #undef SIZE_INV_SHIFT
     assert(diff == regind * size);
     assert(regind < bin.nregs);
 
@@ -2123,46 +2123,46 @@ fn arena_run_split(arena: &arena_t, run: &arena_run_t, size: usize, large: bool,
     var old_ndirty = chunk.ndirty;
     const run_ind = ((usize(run) - usize(chunk)) >> pagesize_2pow);
     // TODO[#173] the .map is dynamically sized
-    var total_pages = ((*(&(&chunk.map)[run_ind].bits) & ~(usize)(pagesize_mask)) >> pagesize_2pow);
+    // var total_pages = ((*(&(&chunk.map)[run_ind].bits) & ~pagesize_mask) >> pagesize_2pow);
+    var total_pages = (chunk.getsize(run_ind)) >> pagesize_2pow;
     var need_pages = (size >> pagesize_2pow);
     assert(need_pages > 0);
     assert(need_pages <= total_pages);
     var rem_pages = total_pages - need_pages;
 
-    arena.runs_avail.remove(&(&chunk.map)[run_ind]);
+    arena.runs_avail.remove(chunk.getmap(run_ind));
     // Keep track of trailing unused pages for later use.
     if (rem_pages > 0) {
-        // %%io.stdout.printf("rem_pages > 0\n");
         // TODO[#173]
-        *(&(&chunk.map)[run_ind+need_pages].bits) = (rem_pages << pagesize_2pow)
-            | (*(&(&chunk.map)[run_ind + need_pages].bits) & pagesize_mask);
-        *(&(&chunk.map)[run_ind+total_pages-1].bits) = (rem_pages << pagesize_2pow)
-            | (*(&(&chunk.map)[run_ind+total_pages-1].bits) & pagesize_mask);
-        arena.runs_avail.insert((&(&chunk.map)[run_ind+need_pages]));
+        //*(&(&chunk.map)[run_ind+need_pages].bits) = (rem_pages << pagesize_2pow) | (*(&(&chunk.map)[run_ind + need_pages].bits) & pagesize_mask);
+        //*(&(&chunk.map)[run_ind+total_pages-1].bits) = (rem_pages << pagesize_2pow) | (*(&(&chunk.map)[run_ind+total_pages-1].bits) & pagesize_mask);
+        chunk.setbits(run_ind + need_pages, (rem_pages << pagesize_2pow) | (chunk.getbits(run_ind + need_pages) & pagesize_mask));
+        chunk.setbits(run_ind + total_pages - 1, (rem_pages << pagesize_2pow) | (chunk.getbits(run_ind + total_pages - 1) & pagesize_mask));
+        arena.runs_avail.insert(chunk.getmap(run_ind + need_pages));
     }
     // for (i = 0; i < need_pages; i++) {
     {var i = usize(0);
         while (i < need_pages; i += 1) {
             // Zero if necessary.
-            //     if (zero) {
-            //         if ((chunk->map[run_ind + i].bits & CHUNK_MAP_ZEROED)
-            //             == 0) {
-            //             memset((void *)((uintptr_t)chunk + ((run_ind
-            //                                                  + i) << pagesize_2pow)), 0, pagesize);
-            //             // CHUNK_MAP_ZEROED is cleared below.
-            //         }
-            //     }
+            if (zero) {
+                if ((chunk.getbits(run_ind + i) & CHUNK_MAP_ZEROED) == 0) {
+                    @memset((&u8)(usize(chunk) + ((run_ind + i) << pagesize_2pow)), 0, pagesize);
+                    // CHUNK_MAP_ZEROED is cleared below.
+                }
+            }
             // Update dirty page accounting.
-            if ((*(&(&chunk.map)[run_ind + i].bits) & CHUNK_MAP_DIRTY) != 0) {
+            if ((chunk.getbits(run_ind + i) & CHUNK_MAP_DIRTY) != 0) {
                 chunk.ndirty -= 1;
                 arena.ndirty -= 1;
                 // CHUNK_MAP_DIRTY is cleared below.
             }
             // Initialize the chunk map.
             if (large) {
-                *(&(&chunk.map)[run_ind + i].bits) = CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED;
+                //*(&(&chunk.map)[run_ind + i].bits) = CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED;
+                chunk.setbits(run_ind + i,  CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED);
             } else {
-                *(&(&chunk.map)[run_ind + i].bits) = (usize(run)) | CHUNK_MAP_ALLOCATED;
+                //*(&(&chunk.map)[run_ind + i].bits) = (usize(run)) | CHUNK_MAP_ALLOCATED;
+                chunk.setbits(run_ind + i,  usize(run) | CHUNK_MAP_ALLOCATED);
             }
         }
     }
@@ -2172,7 +2172,8 @@ fn arena_run_split(arena: &arena_t, run: &arena_run_t, size: usize, large: bool,
     // pages only matters if the application tries to operate on an
     // interior pointer.
     if (large) {
-        *(&(&chunk.map)[run_ind].bits) |= size;
+        // *(&(&chunk.map)[run_ind].bits) |= size;
+        chunk.setbits(run_ind, chunk.getbits(run_ind) | size);
     }
     if (chunk.ndirty == 0 && old_ndirty > 0) {
         arena.chunks_dirty.remove(chunk);
@@ -2203,31 +2204,34 @@ fn arena_chunk_alloc(arena: &arena_t) -> &arena_chunk_t {
         // Claim that no pages are in use, since the header is merely
         // overhead.
         chunk.ndirty = 0;
+        chunk.nmaps = chunk_npages;
 
         // Initialize the map to contain one maximal free untouched run.
         var i = usize(0);
         while (i < arena_chunk_header_npages; i += 1) {
             // TODO[#173]: chunk.map[i].bits = 0;
-            *(&(&chunk.map)[i].bits) = 0;
-            // *m = 0;
+            //*(&(&chunk.map)[i].bits) = 0;
+            chunk.setbits(i, 0);
         }
         // TODO: chunk.map[i].bits = u32(arena_maxclass) | CHUNK_MAP_ZEROED;
-        *(&(&chunk.map)[i].bits) = arena_maxclass | CHUNK_MAP_ZEROED;
-        //*m = u32(arena_maxclass) | CHUNK_MAP_ZEROED;
+        //*(&(&chunk.map)[i].bits) = arena_maxclass | CHUNK_MAP_ZEROED;
+        chunk.setbits(i, arena_maxclass | CHUNK_MAP_ZEROED);
         // BUG fixed: missing i += 1;
         i += 1;
         while (i < chunk_npages - 1; i += 1) {
             // chunk.map[i].bits = CHUNK_MAP_ZEROED;
-            *(&(&chunk.map)[i].bits) = CHUNK_MAP_ZEROED;
+            // *(&(&chunk.map)[i].bits) = CHUNK_MAP_ZEROED;
+            chunk.setbits(i, CHUNK_MAP_ZEROED);
         }
         // chunk.map[chunk_npages-1].bits = u32(arena_maxclass) | CHUNK_MAP_ZEROED;
-        *(&(&chunk.map)[chunk_npages - 1].bits) = arena_maxclass | CHUNK_MAP_ZEROED;
+        //*(&(&chunk.map)[chunk_npages - 1].bits) = arena_maxclass | CHUNK_MAP_ZEROED;
+        chunk.setbits(chunk_npages - 1, arena_maxclass | CHUNK_MAP_ZEROED);
     }
 
     // Insert the run into the runs_avail tree.
     // arena_avail_tree_insert(&arena.runs_avail, &chunk.map[arena_chunk_header_npages]);
     // TODO: arena.runs_avail.insert(&chunk.map[arena_chunk_header_npages]);
-    arena.runs_avail.insert(&(&chunk.map)[arena_chunk_header_npages]);
+    arena.runs_avail.insert(chunk.getmap(arena_chunk_header_npages));
     return chunk;
 }
 
@@ -2253,7 +2257,7 @@ fn arena_chunk_dealloc(arena: &arena_t, chunk: &arena_chunk_t) {
     // that purpose.
     // arena_avail_tree_remove(&arena.runs_avail, &chunk.map[arena_chunk_header_npages]);
     // TODO: arena.runs_avail.remove(&chunk.map[arena_chunk_header_npages]);
-    arena.runs_avail.remove(&(&chunk.map)[arena_chunk_header_npages]);
+    arena.runs_avail.remove(chunk.getmap(arena_chunk_header_npages));
     arena.spare = chunk;
 }
 
@@ -2261,8 +2265,8 @@ fn arena_run_alloc(arena: &arena_t, size: usize, large: bool, zero: bool) -> ?&a
     //arena_chunk_t *chunk;
     //arena_run_t *run;
     //arena_chunk_map_t *mapelm, key;
-    var run: &arena_run_t = undefined;
-    var key: arena_chunk_map_t = undefined;
+    var run: &arena_run_t = zeroes;
+    var key: arena_chunk_map_t = zeroes;
 
     assert(size <= arena_maxclass);
     assert((size & pagesize_mask) == 0);
@@ -2295,7 +2299,6 @@ fn arena_purge(arena: &arena_t) {
     //#ifdef MALLOC_DEBUG
     // if (MALLOC_DEBUG) {
     //     var ndirty = usize(0);
-
     //     rb_foreach_begin(arena_chunk_t, link_dirty, &arena.chunks_dirty, chunk) {
     //         ndirty += chunk.ndirty;
     //     } rb_foreach_end(arena_chunk_t, link_dirty, &arena.chunks_dirty, chunk)
@@ -2316,7 +2319,6 @@ fn arena_purge(arena: &arena_t) {
     // only been partially purged.
     while (arena.ndirty > (opt_dirty_max >> 1)) {
         //var chunk = arena_chunk_tree_dirty_last(&arena.chunks_dirty);
-        // TODO!!!: Implement missing functionality in redblack.zig...
         var cchunk = arena.chunks_dirty.last();
         assert(usize(cchunk) != usize(0));
         var i = chunk_npages - 1;
@@ -2326,7 +2328,7 @@ fn arena_purge(arena: &arena_t) {
                 // TODO[#173]
                 if ((*(&(&chunk.map)[i].bits) & CHUNK_MAP_DIRTY) != 0) {
                     *(&(&chunk.map)[i].bits) ^= CHUNK_MAP_DIRTY;
-                    //* Find adjacent dirty run(s). */
+                    // Find adjacent dirty run(s).
                     var npages = usize(1);
                     while ((i > arena_chunk_header_npages) && ((*(&(&chunk.map)[i - 1].bits) & CHUNK_MAP_DIRTY) != 0); npages += 1) {
                         i -= 1;
@@ -2363,15 +2365,15 @@ fn arena_purge(arena: &arena_t) {
 // static void
 // arena_run_dalloc(arena_t *arena, arena_run_t *run, bool dirty) {
 fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
-    //     arena_chunk_t *chunk;
-    //     size_t size, run_ind, run_pages;
+    // arena_chunk_t *chunk;
+    // size_t size, run_ind, run_pages;
     var chunk = (&arena_chunk_t)(CHUNK_ADDR2BASE((&u8)(run)));
     var run_ind = ((usize(run) - usize(chunk)) >> pagesize_2pow);
     assert(run_ind >= arena_chunk_header_npages);
     assert(run_ind < chunk_npages);
     var size = usize(0);
-    if ((*(&(&chunk.map)[run_ind].bits) & CHUNK_MAP_LARGE) != 0) {
-        size = *(&(&chunk.map)[run_ind].bits) & ~pagesize_mask;
+    if ((chunk.getbits(run_ind) & CHUNK_MAP_LARGE) != 0) {
+        size = chunk.getsize(run_ind);
     } else {
         size = run.bin.run_size;
     }
@@ -2380,8 +2382,8 @@ fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
     if (dirty) {
         { var i = usize(0);
             while (i < run_pages; i += 1) {
-                assert((*(&(&chunk.map)[run_ind + i].bits) & CHUNK_MAP_DIRTY) == 0);
-                *(&(&chunk.map)[run_ind + i].bits) = CHUNK_MAP_DIRTY;
+                assert((chunk.getbits(run_ind + i) & CHUNK_MAP_DIRTY) == 0);
+                chunk.setbits(run_ind + i, CHUNK_MAP_DIRTY);
             }
             if (chunk.ndirty == 0) {
                 arena.chunks_dirty.insert(chunk);
@@ -2392,24 +2394,25 @@ fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
     } else {
         { var i = usize(0);
             while (i < run_pages; i += 1) {
-                *(&(&chunk.map)[run_ind + i].bits) &= ~(CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED);
+                //*(&(&chunk.map)[run_ind + i].bits) &= ~(CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED);
+                chunk.clearbits(run_ind + i, CHUNK_MAP_LARGE | CHUNK_MAP_ALLOCATED)
             }
         }
     }
-    *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
-    *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
+    chunk.setbits(run_ind, size | (chunk.getbits(run_ind) & pagesize_mask));
+    chunk.setbits(run_ind+run_pages-1, size | (chunk.getbits(run_ind+run_pages-1) & pagesize_mask));
     // Try to coalesce forward.
     if (((run_ind + run_pages) < chunk_npages) && (*(&(&chunk.map)[run_ind+run_pages].bits) & CHUNK_MAP_ALLOCATED) == 0) {
         // if (@compileVar("is_test")) {
         //     %%io.stdout.printf("Try to coalesce forward.\n");
         // }
-        const nrun_size = *(&(&chunk.map)[run_ind+run_pages].bits) & ~pagesize_mask;
+        const nrun_size = chunk.getsize(run_ind+run_pages);
         // Remove successor from runs_avail; the coalesced run is
         // inserted later.
-        arena.runs_avail.remove(&(&chunk.map)[run_ind+run_pages]);
+        arena.runs_avail.remove(chunk.getmap(run_ind + run_pages));
         size += nrun_size;
         run_pages = size >> pagesize_2pow;
-        assert((*(&(&chunk.map)[run_ind+run_pages-1].bits) & ~pagesize_mask) == nrun_size);
+        assert((chunk.getsize(run_ind+run_pages-1)) == nrun_size);
         *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
         *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
     }
@@ -2418,24 +2421,24 @@ fn arena_run_dalloc(arena: &arena_t, run: &arena_run_t, dirty: bool) {
         // if (@compileVar("is_test")) {
         //     %%io.stdout.printf("Try to coalesce backward.\n");
         // }
-        const prun_size = *(&(&chunk.map)[run_ind-1].bits) & ~pagesize_mask;
+        const prun_size = chunk.getsize(run_ind - 1);
         run_ind -= prun_size >> pagesize_2pow;
         // Remove predecessor from runs_avail; the coalesced run is
         // inserted later.
-        arena.runs_avail.remove(&(&chunk.map)[run_ind]);
+        arena.runs_avail.remove(chunk.getmap(run_ind));
         size += prun_size;
         run_pages = size >> pagesize_2pow;
-        assert((*(&(&chunk.map)[run_ind].bits) & ~pagesize_mask) == prun_size);
+        assert(chunk.getsize(run_ind) == prun_size);
         *(&(&chunk.map)[run_ind].bits) = size | (*(&(&chunk.map)[run_ind].bits) & pagesize_mask);
         *(&(&chunk.map)[run_ind+run_pages-1].bits) = size | (*(&(&chunk.map)[run_ind+run_pages-1].bits) & pagesize_mask);
     }
     // Insert into runs_avail, now that coalescing is complete.
-    arena.runs_avail.insert(&(&chunk.map)[run_ind]);
+    arena.runs_avail.insert(chunk.getmap(run_ind));
     // Deallocate chunk if it is now completely unused.
     if ((*(&(&chunk.map)[arena_chunk_header_npages].bits) & (~pagesize_mask | CHUNK_MAP_ALLOCATED)) == arena_maxclass) {
-        if (@compileVar("is_test")) {
-            %%io.stdout.printf("dealloc completely unused arena.\n");
-        }
+        // if (@compileVar("is_test")) {
+        //     %%io.stdout.printf("dealloc completely unused arena.\n");
+        // }
         arena_chunk_dealloc(arena, chunk);
     }
     // Enforce opt_dirty_max.
@@ -2478,19 +2481,19 @@ fn arena_bin_nonfull_run_get(arena: &arena_t, bin: &arena_bin_t) -> ?&arena_run_
     // var run: ?&arena_run_t = null;
     //     unsigned i, remainder;
     // Look for a usable run.
-    var mapelm = bin.runs.first();
-    if (usize(mapelm) != usize(0)) {
+    // var mapelm = bin.runs.first();
+    if (var mapelm ?= bin.runs.first()) {
         // run is guaranteed to have available space.
-        if (var mlm ?= mapelm) {
-            var run = (&arena_run_t)(mlm.bits & ~pagesize_mask);
-            bin.runs.remove(mlm);
+        //if (var mlm ?= mapelm) {
+            var r = (&arena_run_t)(mapelm.bits & ~pagesize_mask);
+            bin.runs.remove(mapelm);
             // #ifdef MALLOC_STATS
             if (MALLOC_STATS) {
                 bin.stats.reruns += 1;
             }
             // #endif
-            return run;
-        }
+            return r;
+            //}
     }
     // No existing runs have any space available.
     // Allocate a new run.
@@ -2508,7 +2511,7 @@ fn arena_bin_nonfull_run_get(arena: &arena_t, bin: &arena_bin_t) -> ?&arena_run_
         if (remainder == 0) {
             *(&(&run.regs_mask)[i]) = @maxValue(u32);
         } else {
-            *(&(&run.regs_mask)[i]) = u32((@maxValue(u32)) >> ((1 << (SIZEOF_INT_2POW + 3)) - remainder));
+            *(&(&run.regs_mask)[i]) = u32(u32(@maxValue(u32)) >> ((1 << (SIZEOF_INT_2POW + 3)) - remainder));
         }
     }
     //     for (i = 0; i < bin->regs_mask_nelms - 1; i++)
@@ -2545,10 +2548,12 @@ fn arena_bin_nonfull_run_get(arena: &arena_t, bin: &arena_bin_t) -> ?&arena_run_
 inline fn arena_bin_malloc_easy(arena: &arena_t, bin: &arena_bin_t, run: &arena_run_t) -> ?&u8 {
     assert(run.magic == ARENA_RUN_MAGIC);
     assert(run.nfree > 0);
-    var ret = arena_run_reg_alloc(run, bin);
-    assert(usize(ret) != usize(0));
-    run.nfree -= 1;
-    return ret;
+    if (var ret ?= arena_run_reg_alloc(run, bin)) {
+        run.nfree -= 1;
+        return ret;
+    }
+    %%abort();
+    return null;
 }
 
 /// Re-fill bin->runcur, then call arena_bin_malloc_easy().
@@ -2745,10 +2750,10 @@ inline fn arena_malloc_small(arena: &arena_t, size: usize, zero: bool) -> ?&u8 {
     } else {
         ret = arena_bin_malloc_hard(arena, bin);
     }
-    if (usize(ret) == usize(0)) {
-        malloc_spin_unlock(&arena.lock);
-        return (null);
-    }
+    // if (usize(ret) == usize(0)) {
+    //     malloc_spin_unlock(&arena.lock);
+    //     return null;
+    // }
     if (var r ?= ret) {
         // #ifdef MALLOC_STATS
         if (MALLOC_STATS) {
@@ -2767,32 +2772,34 @@ inline fn arena_malloc_small(arena: &arena_t, size: usize, zero: bool) -> ?&u8 {
         } else {
             @memset(r, 0, size);
         }
+    } else {
+        ret = null;
     }
 
     return ret;
 }
 
 fn arena_malloc_large(arena: &arena_t, size: usize, zero: bool) -> &u8 {
-    var lsize = PAGE_CEILING(size);
+    const lsize = PAGE_CEILING(size);
     if (MALLOC_BALANCE) {
         arena_lock_balance(arena);
     } else {
         malloc_spin_lock(&arena.lock);
     }
-    if (var r ?= arena_run_alloc(arena, size, true, zero)) {
+    if (var r ?= arena_run_alloc(arena, lsize, true, zero)) {
         var ret = r;
         // #ifdef MALLOC_STATS
         if (MALLOC_STATS) {
             arena.stats.nmalloc_large += 1;
-            arena.stats.allocated_large += size;
+            arena.stats.allocated_large += lsize;
         }
         // #endif
         malloc_spin_unlock(&arena.lock);
         if (zero == false) {
             if (opt_junk) {
-                @memset(ret, 0xa5, size);
+                @memset(ret, 0xa5, lsize);
             } else if (opt_zero) {
-                @memset(ret, 0, size);
+                @memset(ret, 0, lsize);
             }
         }
         return (&u8)(ret);
@@ -2931,45 +2938,45 @@ fn ipalloc(alignment: usize, size: usize) -> ?&u8 {
         // ret = arena_malloc(choose_arena(), ceil_size, false);
     } else {
         // size_t run_size;
-    // We can't achieve subpage alignment, so round up alignment
-    // permanently; it makes later calculations simpler.
-    // alignment = PAGE_CEILING(alignment);
-    // ceil_size = PAGE_CEILING(size);
-    // (ceil_size < size) protects against very large sizes within
-    // pagesize of SIZE_T_MAX.
-    //
-    // (ceil_size + alignment < ceil_size) protects against the
-    // combination of maximal alignment and ceil_size large enough
-    // to cause overflow.  This is similar to the first overflow
-    // check above, but it needs to be repeated due to the new
-    // ceil_size value, which may now be *equal* to maximal
-    // alignment, whereas before we only detected overflow if the
-    // original size was *greater* than maximal alignment.
-    // if (ceil_size < size || ceil_size + alignment < ceil_size) {
-    //     //* size_t overflow. */
-    //     return (null);
-    // }
-    // // Calculate the size of the over-size run that arena_palloc()
-    // // would need to allocate in order to guarantee the alignment.
-    // if (ceil_size >= alignment)
-    //     run_size = ceil_size + alignment - pagesize;
-    // else {
-    //     // It is possible that (alignment << 1) will cause
-    //     // overflow, but it doesn't matter because we also
-    //     // subtract pagesize, which in the case of overflow
-    //     // leaves us with a very large run_size.  That causes
-    //     // the first conditional below to fail, which means
-    //     // that the bogus run_size value never gets used for
-    //     // anything important.
-    //     run_size = (alignment << 1) - pagesize;
-    // }
-    // if (run_size <= arena_maxclass) {
-    //     ret = arena_palloc(choose_arena(), alignment, ceil_size,
-    //                        run_size);
-    // } else if (alignment <= chunksize)
-    //     ret = huge_malloc(ceil_size, false);
-    // else
-    //     ret = huge_palloc(alignment, ceil_size);
+        // We can't achieve subpage alignment, so round up alignment
+        // permanently; it makes later calculations simpler.
+        // alignment = PAGE_CEILING(alignment);
+        // ceil_size = PAGE_CEILING(size);
+        // (ceil_size < size) protects against very large sizes within
+        // pagesize of SIZE_T_MAX.
+        //
+        // (ceil_size + alignment < ceil_size) protects against the
+        // combination of maximal alignment and ceil_size large enough
+        // to cause overflow.  This is similar to the first overflow
+        // check above, but it needs to be repeated due to the new
+        // ceil_size value, which may now be *equal* to maximal
+        // alignment, whereas before we only detected overflow if the
+        // original size was *greater* than maximal alignment.
+        // if (ceil_size < size || ceil_size + alignment < ceil_size) {
+        //     //* size_t overflow. */
+        //     return (null);
+        // }
+        // // Calculate the size of the over-size run that arena_palloc()
+        // // would need to allocate in order to guarantee the alignment.
+        // if (ceil_size >= alignment)
+        //     run_size = ceil_size + alignment - pagesize;
+        // else {
+        //     // It is possible that (alignment << 1) will cause
+        //     // overflow, but it doesn't matter because we also
+        //     // subtract pagesize, which in the case of overflow
+        //     // leaves us with a very large run_size.  That causes
+        //     // the first conditional below to fail, which means
+        //     // that the bogus run_size value never gets used for
+        //     // anything important.
+        //     run_size = (alignment << 1) - pagesize;
+        // }
+        // if (run_size <= arena_maxclass) {
+        //     ret = arena_palloc(choose_arena(), alignment, ceil_size,
+        //                        run_size);
+        // } else if (alignment <= chunksize)
+        //     ret = huge_malloc(ceil_size, false);
+        // else
+        //     ret = huge_palloc(alignment, ceil_size);
     }
     assert((usize(ret) & (alignment - 1)) == 0);
     return ret;
@@ -3034,71 +3041,74 @@ inline fn isalloc(ptr: &u8) -> usize {
 // static inline void
 // arena_dalloc_small(arena_t *arena, arena_chunk_t *chunk, void *ptr, arena_chunk_map_t *mapelm) {
 inline fn arena_dalloc_small(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, mapelm: &arena_chunk_map_t) {
-    // TODO: This is next for implementation...
     //     arena_run_t *run;
     //     arena_bin_t *bin;
     //     size_t size;
-    var run = (&arena_run_t)(mapelm.bits & ~(usize)(pagesize_mask));
+    // run = (arena_run_t *)(mapelm->bits & ~pagesize_mask);
+    var run = (&arena_run_t)(mapelm.bits & ~(pagesize_mask));
     if (MALLOC_DEBUG) {
-        // assert(run.magic == ARENA_RUN_MAGIC);
+        // this fails, run "ptr/mapelm.bits" must be wrong...
+        assert(run.magic == ARENA_RUN_MAGIC);
     }
     var bin = run.bin;
     var size = bin.reg_size;
     if (opt_junk) {
         @memset(ptr, 0x5a, size);
     }
-    //     arena_run_reg_dalloc(run, bin, ptr, size);
-    //     run->nfree++;
-    //     if (run->nfree == bin->nregs) {
-    //         // Deallocate run.
-    //         if (run == bin->runcur)
-    //             bin->runcur = null;
-    //         else if (bin->nregs != 1) {
-    //             size_t run_pageind = (((uintptr_t)run -
-    //                                    (uintptr_t)chunk)) >> pagesize_2pow;
-    //             arena_chunk_map_t *run_mapelm =
-    //                 &chunk->map[run_pageind];
-    //             // This block's conditional is necessary because if the
-    //             // run only contains one region, then it never gets
-    //             // inserted into the non-full runs tree.
-    //             arena_run_tree_remove(&bin->runs, run_mapelm);
-    //         }
-    // #ifdef MALLOC_DEBUG
-    //         run->magic = 0;
-    // #endif
-    //         arena_run_dalloc(arena, run, true);
-    // #ifdef MALLOC_STATS
-    //         bin->stats.curruns--;
-    // #endif
-    //     } else if (run->nfree == 1 && run != bin->runcur) {
-    //         // Make sure that bin->runcur always refers to the lowest
-    //         // non-full run, if one exists.
-    //         if (bin->runcur == null)
-    //             bin->runcur = run;
-    //         else if ((uintptr_t)run < (uintptr_t)bin->runcur) {
-    //             // Switch runcur.
-    //             if (bin->runcur->nfree > 0) {
-    //                 arena_chunk_t *runcur_chunk =
-    //                     CHUNK_ADDR2BASE(bin->runcur);
-    //                 size_t runcur_pageind =
-    //                     (((uintptr_t)bin->runcur -
-    //                       (uintptr_t)runcur_chunk)) >> pagesize_2pow;
-    //                 arena_chunk_map_t *runcur_mapelm =
-    //                     &runcur_chunk->map[runcur_pageind];
-    //                 // Insert runcur.
-    //                     arena_run_tree_insert(&bin->runs,
-    //                                           runcur_mapelm);
-    //             }
-    //             bin->runcur = run;
-    //         } else {
-    //             size_t run_pageind = (((uintptr_t)run - (uintptr_t)chunk)) >> pagesize_2pow;
-    //             arena_chunk_map_t *run_mapelm =
-    //                 &chunk->map[run_pageind];
-    //             assert(arena_run_tree_search(&bin->runs, run_mapelm) ==
-    //                    null);
-    //             arena_run_tree_insert(&bin->runs, run_mapelm);
-    //         }
-    //     }
+    arena_run_reg_dalloc(run, bin, ptr, size);
+    run.nfree += 1;
+    if (run.nfree == bin.nregs) {
+        // Deallocate run.
+        if (run == bin.runcur) {
+            bin.runcur = (@typeOf(bin.runcur))(usize(0));
+        } else if (bin.nregs != 1) {
+            const run_pageind = (usize(run) - usize(chunk)) >> pagesize_2pow;
+            var run_mapelm = &(&chunk.map)[run_pageind];
+            // This block's conditional is necessary because if the
+            // run only contains one region, then it never gets
+            // inserted into the non-full runs tree.
+            bin.runs.remove(run_mapelm);
+        }
+        // #ifdef MALLOC_DEBUG
+        if (MALLOC_DEBUG) {
+            run.magic = 0;
+        }
+        // #endif
+        arena_run_dalloc(arena, run, true);
+        // #ifdef MALLOC_STATS
+        if (MALLOC_STATS) {
+            bin.stats.curruns -= 1;
+        }
+        // #endif
+    } else if (run.nfree == 1 && run != bin.runcur) {
+        // Make sure that bin->runcur always refers to the lowest
+        // non-full run, if one exists.
+        if (usize(bin.runcur) == usize(0)) {
+            bin.runcur = run;
+        } else if (usize(run) < usize(bin.runcur)) {
+            // Switch runcur.
+            if (bin.runcur.nfree > 0) {
+                // arena_chunk_t *runcur_chunk = CHUNK_ADDR2BASE(bin->runcur);
+                var runcur_chunk = (&arena_chunk_t)(CHUNK_ADDR2BASE((&u8)(bin.runcur)));
+                const runcur_pageind = ((usize(bin.runcur) - usize(runcur_chunk))) >> pagesize_2pow;
+                var runcur_mapelm = &(&runcur_chunk.map)[runcur_pageind];
+                // Insert runcur.
+                // arena_run_tree_insert(&bin->runs, runcur_mapelm);
+                bin.runs.insert(runcur_mapelm);
+            }
+            bin.runcur = run;
+        } else {
+            const run_pageind = ((usize(run) - usize(chunk))) >> pagesize_2pow;
+            var run_mapelm = &(&chunk.map)[run_pageind];
+            // assert(arena_run_tree_search(&bin->runs, run_mapelm) == null);
+            if (var zz ?= bin.runs.search(run_mapelm)) {
+
+            } else {
+                %%io.stdout.printf("Whoops.\n");
+            }
+            bin.runs.insert(run_mapelm);
+        }
+    }
     if (MALLOC_STATS) {
         arena.stats.allocated_small -= size;
         arena.stats.ndalloc_small += 1;
@@ -3121,7 +3131,9 @@ fn arena_dalloc_large(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8) {
     // #ifdef MALLOC_STATS
     //         if (opt_junk)
     // #endif
-    //             memset(ptr, 0x5a, size);
+    if (MALLOC_STATS && opt_junk) {
+        @memset(ptr, 0x5a, size);
+    }
     // #ifdef MALLOC_STATS
     if (MALLOC_STATS) {
         arena.stats.allocated_large -= size;
@@ -3148,7 +3160,7 @@ inline fn arena_dalloc(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8) {
 
     const pageind = ((usize(ptr) - usize(chunk)) >> pagesize_2pow);
     // TODO[#173]...
-    var mapelm = &(&chunk.map)[pageind];
+    var mapelm = chunk.getmap(pageind);
     assert((mapelm.bits & CHUNK_MAP_ALLOCATED) != 0);
     if ((mapelm.bits & CHUNK_MAP_LARGE) == 0) {
         // Small allocation.
@@ -3165,6 +3177,7 @@ inline fn idalloc(ptr: &u8) {
     var chunk = CHUNK_ADDR2BASE(ptr);
     if (chunk != ptr) {
         var cp = (&arena_chunk_t)(chunk);
+        // %%cp.dump();
         arena_dalloc(cp.arena, cp, ptr);
     } else {
         huge_dalloc(ptr);
@@ -3264,6 +3277,7 @@ fn arena_ralloc_large_shrink(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, s
 // static void *
 // arena_ralloc(void *ptr, size_t size, size_t oldsize) {
 fn arena_ralloc(ptr: &u8, size: usize, oldsize: usize) -> ?&u8 {
+    @breakpoint();
     //     void *ret;
     //     size_t copysize;
     //     // Try to avoid moving the allocation.
@@ -3322,7 +3336,7 @@ fn arena_new(arena: &arena_t) -> bool {
         @memset(&arena.stats, 0, @sizeOf(arena_stats_t));
     }
     // Initialize chunks.
-    //     arena_chunk_tree_dirty_new(&arena->chunks_dirty);
+    // arena_chunk_tree_dirty_new(&arena->chunks_dirty);
     arena.chunks_dirty.init();
     arena.spare = (&arena_chunk_t)(usize(0));
     arena.ndirty = 0;
@@ -3355,7 +3369,6 @@ fn arena_new(arena: &arena_t) -> bool {
         bin.runcur = (&arena_run_t)(usize(0));
         bin.runs.init();
         bin.reg_size = (i - ntbins + 1) << QUANTUM_2POW;
-        // TODO: prev_run_size = arena_bin_run_size_calc(bin, prev_run_size);
         prev_run_size = arena_bin_run_size_calc(bin, prev_run_size);
         if (MALLOC_STATS) {
             @memset(&bin.stats, 0, @sizeOf(malloc_bin_stats_t));
@@ -3733,37 +3746,50 @@ fn malloc_print_stats() -> %void {
 
 fn size2bin_validate() {
     if (MALLOC_DEBUG) {
+        var s: [UMAX2S_BUFSIZE]u8 = zeroes;
+        var ss: [UMAX2S_BUFSIZE]u8 = zeroes;
         assert(size2bin[0] == u8(0xff));
-        // #  ifdef MALLOC_TINY
-        //     // Tiny.
-        //     for (; i < (1 << TINY_MIN_2POW); i++) {
-        //         size = pow2_ceil(1 << TINY_MIN_2POW);
-        //         binind = ffs((int)(size >> (TINY_MIN_2POW + 1)));
-        //         assert(size2bin[i] == binind);
-        //     }
-        //     for (; i < qspace_min; i++) {
-        //         size = pow2_ceil(i);
-        //         binind = ffs((int)(size >> (TINY_MIN_2POW + 1)));
-        //         assert(size2bin[i] == binind);
-        //     }
+        var i = usize(1);
+        // # ifdef MALLOC_TINY
+        if (MALLOC_TINY) {
+            // Tiny.
+            // for (; i < (1 << TINY_MIN_2POW); i++) {
+            const l = (1 << TINY_MIN_2POW);
+            while (i < l; i += 1) {
+                var size = next_power_of_two(1 << TINY_MIN_2POW);
+                const binind = ffs((size >> (TINY_MIN_2POW + 1)));
+                assert(size2bin[i] == binind);
+            }
+            //     for (; i < qspace_min; i++) {
+            while (i < qspace_min; i += 1) {
+                var size = next_power_of_two(i);
+                const binind = ffs((size >> (TINY_MIN_2POW + 1)));
+                assert(size2bin[i] == binind);
+            }
+        }
         // #  endif
         // Quantum-spaced.
-        var i = usize(1);
         while (i <= qspace_max; i += 1) {
             const size = u8(QUANTUM_CEILING(i));
             const binind = ntbins + (size >> QUANTUM_2POW) - 1;
             assert(size2bin[i] == binind);
+            // const s2b = size2bin[i];
+            // %%_malloc_message(umax2s(binind, s), " vs ", umax2s(s2b, ss), "\n");
         }
         // Cacheline-spaced.
         while (i <= cspace_max; i += 1) {
             const size = CACHELINE_CEILING(i);
             const binind = ntbins + nqbins + ((size - cspace_min) >> CACHELINE_2POW);
-            //assert(size2bin[i] == binind);
+            const s2b = size2bin[i];
+            assert(s2b == binind);
+            // %%_malloc_message(umax2s(binind, s), " vs ", umax2s(s2b, ss), "\n");
         }
         // Sub-page.
         while (i <= sspace_max; i += 1) {
             const size = SUBPAGE_CEILING(i);
             const binind = ntbins + nqbins + ncbins + ((size - sspace_min) >> SUBPAGE_2POW);
+            const s2b = size2bin[i];
+            assert(s2b == binind);
             //assert(size2bin[i] == binind);
         }
     }
@@ -3788,6 +3814,7 @@ fn size2bin_init() -> bool {
 
 // // static bool
 fn size2bin_init_hard() -> bool {
+    %%io.stdout.printf("*** size2bin_init_hard ***\n");
     return false;
 }
 //     size_t i, size, binind;
@@ -3872,7 +3899,7 @@ fn malloc_init_hard() -> bool {
 
     // We assume that pagesize is a power of 2 when calculating
     // pagesize_mask and pagesize_2pow.
-    // Why doesn't this fail, in disageement with gdb 
+    // Why doesn't this fail, in disageement with gdb
     assert(@sizeOf(@typeOf(pagesize_mask)) == @sizeOf(@typeOf(pagesize)));
     assert(((pagesize - 1) & pagesize) == 0);
     pagesize_mask = usize(pagesize - 1);
@@ -4118,12 +4145,10 @@ fn malloc_init_hard() -> bool {
     chunksize = (1 << opt_chunk_2pow);
     chunksize_mask = chunksize - 1;
     chunk_npages = (chunksize >> pagesize_2pow);
-    {
-        // Compute the header size such that it is large enough to
-        // contain the page map.
-        var header_size = @sizeOf(arena_chunk_t) + (@sizeOf(arena_chunk_map_t) * (chunk_npages - 1));
-        arena_chunk_header_npages = (header_size >> pagesize_2pow) + usize((header_size & pagesize_mask) != 0);
-    }
+    // Compute the header size such that it is large enough to
+    // contain the page map.
+    const header_size = @sizeOf(arena_chunk_t) + (@sizeOf(arena_chunk_map_t) * (chunk_npages - 1));
+    arena_chunk_header_npages = (header_size >> pagesize_2pow) + usize((header_size & pagesize_mask) != 0);
     arena_maxclass = chunksize - (arena_chunk_header_npages << pagesize_2pow);
 
     // UTRACE(0, 0, 0);
@@ -4234,7 +4259,7 @@ fn malloc_init_hard() -> bool {
 
     // Allocate and initialize arenas.
     // @sizeOf(arena_t or &arena_t)
-    if (var a ?= base_alloc(@sizeOf(arena_t) * narenas)) {
+    if (var a ?= base_alloc(@sizeOf(&arena_t) * narenas)) {
         arenas = (&&arena_t)(a);
     } else {
         malloc_mutex_unlock(&init_lock);
@@ -4312,6 +4337,7 @@ pub fn je_malloc(size: usize) -> ?&u8 {
 
  RETURN:
     if (var rr ?= ret) {
+        // ret = rr;
     } else {
         if (opt_xmalloc) {
             %%_malloc_message(_getprogname(), ": (malloc) Error in malloc(): out of memory\n", "", "");
@@ -4454,28 +4480,28 @@ pub fn je_realloc(ptr: &u8, size: usize) -> ?&u8 {
         assert(malloc_initialized);
         ret = iralloc(ptr, lsize);
         //    if (ret == null) {
-    //                 if (opt_xmalloc) {
-    //                         _malloc_message(_getprogname(),
-    //                             ": (malloc) Error in realloc(): out of "
-    //                             "memory\n", "", "");
-    //                         abort();
-    //                 }
-    //                 errno = ENOMEM;
-    //         }
+        //                 if (opt_xmalloc) {
+        //                         _malloc_message(_getprogname(),
+        //                             ": (malloc) Error in realloc(): out of "
+        //                             "memory\n", "", "");
+        //                         abort();
+        //                 }
+        //                 errno = ENOMEM;
+        //         }
     } else {
-    //         if (malloc_init())
-    //                 ret = null;
-    //         else
-    //                 ret = imalloc(size);
-    //         if (ret == null) {
-    //                 if (opt_xmalloc) {
-    //                         _malloc_message(_getprogname(),
-    //                             ": (malloc) Error in realloc(): out of "
-    //                             "memory\n", "", "");
-    //                         abort();
-    //                 }
-    //                 errno = ENOMEM;
-    //         }
+        //         if (malloc_init())
+        //                 ret = null;
+        //         else
+        //                 ret = imalloc(size);
+        //         if (ret == null) {
+        //                 if (opt_xmalloc) {
+        //                         _malloc_message(_getprogname(),
+        //                             ": (malloc) Error in realloc(): out of "
+        //                             "memory\n", "", "");
+        //                         abort();
+        //                 }
+        //                 errno = ENOMEM;
+        //         }
     }
     RETURN:
     // UTRACE(ptr, lsize, ret);
@@ -4568,6 +4594,19 @@ pub fn _malloc_postfork() {
 //******************************************************************************
 // Some tests
 //******************************************************************************
+fn testFFS() {
+    @setFnTest(this, true);
+    var s: [UMAX2S_BUFSIZE]u8 = zeroes;
+    var ss: [UMAX2S_BUFSIZE]u8 = zeroes;
+    var i: u32 = 1;
+    while(i < (1 << 20); i <<= 1) {
+        %%_malloc_message("i=", umaxx2s(i, s), ", ffs=", umax2s(32 - @clz(@typeOf(i), i) - 1, ss));
+        %%_malloc_message("\n", "", "", "");
+        %%_malloc_message("i=", umaxx2s(i, s), ", ffs=", umax2s(ffs(i) - 1, ss));
+        %%_malloc_message("\n", "", "", "");
+    }
+}
+
 fn testMallocInit() {
     @setFnTest(this, true);
     opt_print_stats = true;     // set to false to go quiet
@@ -4575,22 +4614,34 @@ fn testMallocInit() {
     MALLOC_DEBUG = true;        // Need this for now
     malloc_init();
     assert(malloc_initialized == true);
-    var malls: [32]?&u8 = zeroes;
+    var malls: [1024]?&u8 = zeroes;
+    const msize = 384;
+    var s: [UMAX2S_BUFSIZE]u8 = zeroes;
     { var i = usize(0);
-        while (i < 512; i += 1) {
+        while (i < 2; i += 1) {
             for (malls) |*m, x| {
-                    // woot, woot, large arenas (multiple of pagesize) apparently working..
-                    *m = je_malloc(pagesize * (1 + x));
+                    // woot, woot, large arenas (multiple of pagesize)
+                    // apparently working..  smaller size produces
+                    // incorrect allocation, that's basically arenas
+                    // not working on less than pagesize sizes (bin_maxclass)...
+                    *m = je_malloc(msize); // (pagesize * (1 + x));
                     if (var mm ?= *m) {
                         // %%io.stdout.printf("ok\n");
+                        @memset(mm, 0x5a, msize);
+                        if (x < 4) {
+                            %%_malloc_message("malloc=0x", umaxx2s(usize(*m), s), "\n", "");
+                        }
                     } else {
                         %%io.stdout.printf("oh no\n");
                     }
                 }
             %%malloc_print_stats();
-            for (malls) |*m| {
+            for (malls) |*m, x| {
                     if (var mm ?= *m) {
                         // %%io.stdout.printf("freeing\n");
+                        if (x < 4) {
+                            %%_malloc_message("free=0x", umaxx2s(usize(*m), s), "\n", "");
+                        }
                         je_free(mm);
                         *m = (&u8)(usize(0));
                     }
@@ -4598,5 +4649,6 @@ fn testMallocInit() {
             %%malloc_print_stats();
         }
     }
+
     //@breakpoint();
 }
