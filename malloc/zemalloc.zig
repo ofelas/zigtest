@@ -370,7 +370,6 @@ inline fn ffs(v: var) -> @typeOf(v) {
     return (@sizeOf(@typeOf(v)) * 8) -  @clz(@typeOf(v), v);
 }
 
-
 //******************************************************************************/
 // #if HAVE_THREADS != 0
 // typedef pthread_mutex_t malloc_mutex_t;
@@ -381,7 +380,6 @@ inline fn ffs(v: var) -> @typeOf(v) {
 // #endif
 
 // These are fakes so that we can keep the API
-
 const malloc_mutex_t = isize;
 const malloc_spinlock_t = isize;
 const pthread_mutex_t = isize;
@@ -1497,56 +1495,6 @@ fn stats_print(arena: &arena_t) -> %void {
         }
     }
 }
-//     unsigned i, gap_start;
-//     malloc_printf("total:   %12zu %12llu %12llu\n",
-//         arena->stats.allocated_small + arena->stats.allocated_large,
-//         arena->stats.nmalloc_small + arena->stats.nmalloc_large,
-//         arena->stats.ndalloc_small + arena->stats.ndalloc_large);
-//     malloc_printf("bins:     bin   size regs pgs  requests   "
-//                   "newruns    reruns maxruns curruns\n");
-//     for (i = 0, gap_start = UINT_MAX; i < nbins; i++) {
-//             if (arena->bins[i].stats.nruns == 0) {
-//                     if (gap_start == UINT_MAX)
-//                             gap_start = i;
-//             } else {
-//                     if (gap_start != UINT_MAX) {
-//                             if (i > gap_start + 1) {
-//                                     /* Gap of more than one size class. */
-//                                     malloc_printf("[%u..%u]\n",
-//                                         gap_start, i - 1);
-//                             } else {
-//                                     /* Gap of one size class. */
-//                                     malloc_printf("[%u]\n", gap_start);
-//                             }
-//                             gap_start = UINT_MAX;
-//                     }
-//                     malloc_printf(
-//                         "%13u %1s %4u %4u %3u %9llu %9llu"
-//                         " %9llu %7lu %7lu\n",
-//                         i,
-//                         i < ntbins ? "T" : i < ntbins + nqbins ? "Q" :
-//                         i < ntbins + nqbins + ncbins ? "C" : "S",
-//                         arena->bins[i].reg_size,
-//                         arena->bins[i].nregs,
-//                         arena->bins[i].run_size >> pagesize_2pow,
-//                         arena->bins[i].stats.nrequests,
-//                         arena->bins[i].stats.nruns,
-//                         arena->bins[i].stats.reruns,
-//                         arena->bins[i].stats.highruns,
-//                         arena->bins[i].stats.curruns);
-//             }
-//     }
-//     if (gap_start != UINT_MAX) {
-//             if (i > gap_start + 1) {
-//                     /* Gap of more than one size class. */
-//                     malloc_printf("[%u..%u]\n", gap_start, i - 1);
-//             } else {
-//                     /* Gap of one size class. */
-//                     malloc_printf("[%u]\n", gap_start);
-//             }
-//     }
-// }
-// #endif
 
 //******************************************************************************
 // End Utility functions/macros.
@@ -1559,11 +1507,6 @@ fn extent_ad_comp(a: &extent_node_t, b: &extent_node_t) -> isize {
 
     return (isize(a_addr > b_addr) - isize(a_addr < b_addr));
 }
-
-//* Wrap red-black tree macros in functions. */
-// TODO
-//rb_wrap(static, extent_tree_ad_, extent_tree_t, extent_node_t, link_ad,
-//    extent_ad_comp)
 
 //******************************************************************************
 // End extent tree code.
@@ -1578,7 +1521,6 @@ fn pages_map(addr: &u8, size: usize) -> ?&u8 {
                           system.MMAP_PROT_READ | system.MMAP_PROT_WRITE,
                           system.MMAP_MAP_PRIVATE | system.MMAP_MAP_ANON,
                           -1, 0);
-    //var ret = (&u8)(mmap(addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0));
     var ret = (&u8)(m);
 
     if (m == MAP_FAILED) {
@@ -1871,7 +1813,6 @@ fn choose_arena_hard() -> ?&arena_t {
 }
 // #endif
 
-//static inline int
 fn arena_chunk_comp(a: &arena_chunk_t, b: &arena_chunk_t) -> isize {
     const a_chunk = usize(a);
     const b_chunk = usize(b);
@@ -1882,10 +1823,6 @@ fn arena_chunk_comp(a: &arena_chunk_t, b: &arena_chunk_t) -> isize {
     return (isize(a_chunk > b_chunk) - isize(a_chunk < b_chunk));
 }
 
-// Wrap red-black tree macros in functions.
-// rb_wrap(static, arena_chunk_tree_dirty_, arena_chunk_tree_t, arena_chunk_t, link_dirty, arena_chunk_comp)
-
-//static inline int
 fn arena_run_comp(a: &arena_chunk_map_t, b: &arena_chunk_map_t) -> isize {
     const a_mapelm = usize(a);
     const b_mapelm = usize(b);
@@ -1895,9 +1832,6 @@ fn arena_run_comp(a: &arena_chunk_map_t, b: &arena_chunk_map_t) -> isize {
 
     return (isize(a_mapelm > b_mapelm) - isize(a_mapelm < b_mapelm));
 }
-
-//* Wrap red-black tree macros in functions. */
-// rb_wrap(static, arena_run_tree_, arena_run_tree_t, arena_chunk_map_t, link, arena_run_comp)
 
 fn arena_avail_comp(a: &arena_chunk_map_t, b: &arena_chunk_map_t) -> isize {
     const a_size = a.bits & ~pagesize_mask;
@@ -1919,11 +1853,6 @@ fn arena_avail_comp(a: &arena_chunk_map_t, b: &arena_chunk_map_t) -> isize {
 
     return ret;
 }
-
-//* Wrap red-black tree macros in functions. */
-// rb_wrap(static, arena_avail_tree_, arena_avail_tree_t, arena_chunk_map_t, link, arena_avail_comp)
-
-//var arena_avail_tree: arena_avail_tree_t = zeroes;
 
 inline fn arena_run_reg_alloc(run: &arena_run_t, bin: &arena_bin_t) -> ?&u8 {
     var ret: ?&u8 = null;
@@ -1999,13 +1928,13 @@ const log2_table = []u8 {
 
 // #define SIZE_INV_SHIFT 21
 const SIZE_INV_SHIFT = usize(21);
-fn QSIZE_INV(s: usize) -> usize {
+inline fn QSIZE_INV(s: usize) -> usize {
     return (((1 << SIZE_INV_SHIFT) / (s << QUANTUM_2POW)) + 1);
 }
-fn CSIZE_INV(s: usize) -> usize {
+inline fn CSIZE_INV(s: usize) -> usize {
     return (((1 << SIZE_INV_SHIFT) / (s << CACHELINE_2POW)) + 1);
 }
-fn SSIZE_INV(s: usize) -> usize {
+inline fn SSIZE_INV(s: usize) -> usize {
     return (((1 << SIZE_INV_SHIFT) / (s << SUBPAGE_2POW)) + 1);
 }
 
@@ -2481,25 +2410,20 @@ fn arena_bin_nonfull_run_get(arena: &arena_t, bin: &arena_bin_t) -> ?&arena_run_
     // var run: ?&arena_run_t = null;
     //     unsigned i, remainder;
     // Look for a usable run.
-    // var mapelm = bin.runs.first();
     if (var mapelm ?= bin.runs.first()) {
         // run is guaranteed to have available space.
-        //if (var mlm ?= mapelm) {
-            var r = (&arena_run_t)(mapelm.bits & ~pagesize_mask);
-            bin.runs.remove(mapelm);
-            // #ifdef MALLOC_STATS
-            if (MALLOC_STATS) {
-                bin.stats.reruns += 1;
-            }
-            // #endif
-            return r;
-            //}
+        var r = (&arena_run_t)(mapelm.bits & ~pagesize_mask);
+        bin.runs.remove(mapelm);
+        // #ifdef MALLOC_STATS
+        if (MALLOC_STATS) {
+            bin.stats.reruns += 1;
+        }
+        // #endif
+        return r;
     }
     // No existing runs have any space available.
     // Allocate a new run.
     var run = arena_run_alloc(arena, bin.run_size, false, false) ?? return null;
-    //     if (run == null)
-    //         return (null);
     // Initialize run internals.
     run.bin = bin;
     { var i = usize(0);
@@ -2846,7 +2770,6 @@ inline fn icalloc(size: usize) -> ?&u8 {
         } else {
             return (&u8)(usize(0));
         }
-        //return arena_malloc(choose_arena(), size, true);
     } else {
         return huge_malloc(size, true);
     }
@@ -2859,50 +2782,52 @@ fn arena_palloc(arena: &arena_t, alignment: usize, size: usize, alloc_size: usiz
     var ret: ?&u8 = null;
     //     size_t offset;
     //     arena_chunk_t *chunk;
-    //     assert((size & pagesize_mask) == 0);
-    //     assert((alignment & pagesize_mask) == 0);
-    // #ifdef MALLOC_BALANCE
-    //     arena_lock_balance(arena);
-    // #else
-    //     malloc_spin_lock(&arena->lock);
-    // #endif
-    //     ret = (void *)arena_run_alloc(arena, alloc_size, true, false);
-    //     if (ret == null) {
-    //         malloc_spin_unlock(&arena->lock);
-    //         return (null);
-    //     }
-    //     chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(ret);
-    //     offset = (uintptr_t)ret & (alignment - 1);
-    //     assert((offset & pagesize_mask) == 0);
-    //     assert(offset < alloc_size);
-    //     if (offset == 0)
-    //         arena_run_trim_tail(arena, chunk, ret, alloc_size, size, false);
-    //     else {
-    //         size_t leadsize, trailsize;
-    //         leadsize = alignment - offset;
-    //         if (leadsize > 0) {
-    //             arena_run_trim_head(arena, chunk, ret, alloc_size,
-    //                                 alloc_size - leadsize);
-    //             ret = (void *)((uintptr_t)ret + leadsize);
-    //         }
-    //         trailsize = alloc_size - leadsize - size;
-    //         if (trailsize != 0) {
-    //             // Trim trailing space.
-    //             assert(trailsize < alloc_size);
-    //             arena_run_trim_tail(arena, chunk, ret, size + trailsize,
-    //                                 size, false);
-    //         }
-    //     }
-    // #ifdef MALLOC_STATS
-    //     arena->stats.nmalloc_large++;
-    //     arena->stats.allocated_large += size;
-    // #endif
-    //     malloc_spin_unlock(&arena->lock);
-    //     if (opt_junk)
-    //         memset(ret, 0xa5, size);
-    //     else if (opt_zero)
-    //         memset(ret, 0, size);
-    return ret;
+    assert((size & pagesize_mask) == 0);
+    assert((alignment & pagesize_mask) == 0);
+    if (MALLOC_BALANCE) {
+        arena_lock_balance(arena);
+    } else {
+        malloc_spin_lock(&arena.lock);
+    }
+    if (var ar ?= arena_run_alloc(arena, alloc_size, true, false)) {
+        var rr = (&u8)(ar);
+        var chunk = (&arena_chunk_t)(CHUNK_ADDR2BASE(rr));
+        const offset = usize(rr) & (alignment - 1);
+        assert((offset & pagesize_mask) == 0);
+        assert(offset < alloc_size);
+        if (offset == 0) {
+            arena_run_trim_tail(arena, chunk, ar, alloc_size, size, false);
+        } else {
+            // size_t leadsize, trailsize;
+            const leadsize = alignment - offset;
+            if (leadsize > 0) {
+                arena_run_trim_head(arena, chunk, ar, alloc_size, alloc_size - leadsize);
+                ret = (&u8)(usize(rr) + leadsize);
+            }
+            const trailsize = alloc_size - leadsize - size;
+            if (trailsize != 0) {
+                // Trim trailing space.
+                assert(trailsize < alloc_size);
+                arena_run_trim_tail(arena, chunk, ar, size + trailsize, size, false);
+            }
+        }
+        // #ifdef MALLOC_STATS
+        if (MALLOC_STATS) {
+            arena.stats.nmalloc_large += 1;
+            arena.stats.allocated_large += size;
+        }
+        // #endif
+        malloc_spin_unlock(&arena.lock);
+        if (opt_junk) {
+            @memset(rr, 0xa5, size);
+        } else if (opt_zero) {
+            @memset(rr, 0, size);
+        }
+        return rr;
+    } else {
+        malloc_spin_unlock(&arena.lock);
+        return null;
+    }
 }
 
 // static inline void *
@@ -2940,8 +2865,9 @@ fn ipalloc(alignment: usize, size: usize) -> ?&u8 {
         // size_t run_size;
         // We can't achieve subpage alignment, so round up alignment
         // permanently; it makes later calculations simpler.
-        // alignment = PAGE_CEILING(alignment);
-        // ceil_size = PAGE_CEILING(size);
+        var lalignment = PAGE_CEILING(alignment);
+        var run_size = usize(0);
+        ceil_size = PAGE_CEILING(size);
         // (ceil_size < size) protects against very large sizes within
         // pagesize of SIZE_T_MAX.
         //
@@ -2952,31 +2878,35 @@ fn ipalloc(alignment: usize, size: usize) -> ?&u8 {
         // ceil_size value, which may now be *equal* to maximal
         // alignment, whereas before we only detected overflow if the
         // original size was *greater* than maximal alignment.
-        // if (ceil_size < size || ceil_size + alignment < ceil_size) {
-        //     //* size_t overflow. */
-        //     return (null);
-        // }
-        // // Calculate the size of the over-size run that arena_palloc()
-        // // would need to allocate in order to guarantee the alignment.
-        // if (ceil_size >= alignment)
-        //     run_size = ceil_size + alignment - pagesize;
-        // else {
-        //     // It is possible that (alignment << 1) will cause
-        //     // overflow, but it doesn't matter because we also
-        //     // subtract pagesize, which in the case of overflow
-        //     // leaves us with a very large run_size.  That causes
-        //     // the first conditional below to fail, which means
-        //     // that the bogus run_size value never gets used for
-        //     // anything important.
-        //     run_size = (alignment << 1) - pagesize;
-        // }
-        // if (run_size <= arena_maxclass) {
-        //     ret = arena_palloc(choose_arena(), alignment, ceil_size,
-        //                        run_size);
-        // } else if (alignment <= chunksize)
-        //     ret = huge_malloc(ceil_size, false);
-        // else
-        //     ret = huge_palloc(alignment, ceil_size);
+        if (ceil_size < size || ceil_size + lalignment < ceil_size) {
+            // size_t overflow.
+            return null;
+        }
+        // Calculate the size of the over-size run that arena_palloc()
+        // would need to allocate in order to guarantee the alignment.
+        if (ceil_size >= lalignment) {
+            run_size = ceil_size + lalignment - pagesize;
+        } else {
+            // It is possible that (alignment << 1) will cause
+            // overflow, but it doesn't matter because we also
+            // subtract pagesize, which in the case of overflow
+            // leaves us with a very large run_size.  That causes
+            // the first conditional below to fail, which means
+            // that the bogus run_size value never gets used for
+            // anything important.
+            run_size = (lalignment << 1) - pagesize;
+        }
+        if (run_size <= arena_maxclass) {
+            if (var ca ?= choose_arena()) {
+                ret = arena_palloc(ca, lalignment, ceil_size, run_size);
+            } else {
+                %%abort();
+            }
+        } else if (lalignment <= chunksize) {
+            ret = huge_malloc(ceil_size, false);
+        } else {
+            ret = huge_palloc(lalignment, ceil_size);
+        }
     }
     assert((usize(ret) & (alignment - 1)) == 0);
     return ret;
@@ -3508,94 +3438,94 @@ fn huge_malloc(size: usize, zero: bool) -> &u8 {
 // /// Only handles large allocations that require more than chunk alignment.
 // static void *
 // huge_palloc(size_t alignment, size_t size) {
-//     void *ret;
-//     size_t alloc_size, chunk_size, offset;
-//     extent_node_t *node;
-//     // This allocation requires alignment that is even larger than chunk
-//     // alignment.  This means that huge_malloc() isn't good enough.
-//     //
-//     // Allocate almost twice as many chunks as are demanded by the size or
-//     // alignment, in order to assure the alignment can be achieved, then
-//     // unmap leading and trailing chunks.
-//     assert(alignment >= chunksize);
-//     chunk_size = CHUNK_CEILING(size);
-//     if (size >= alignment)
-//         alloc_size = chunk_size + alignment - chunksize;
-//     else
-//         alloc_size = (alignment << 1) - chunksize;
-//     // Allocate an extent node with which to track the chunk.
-//     node = base_node_alloc();
-//     if (node == null)
-//         return (null);
-//     ret = chunk_alloc(alloc_size, false);
-//     if (ret == null) {
-//         base_node_dealloc(node);
-//         return (null);
-//     }
-//     offset = (uintptr_t)ret & (alignment - 1);
-//     assert((offset & chunksize_mask) == 0);
-//     assert(offset < alloc_size);
-//     if (offset == 0) {
-//         // Trim trailing space.
-//         chunk_dealloc((void *)((uintptr_t)ret + chunk_size), alloc_size
-//                       - chunk_size);
-//     } else {
-//         size_t trailsize;
-//         // Trim leading space.
-//         chunk_dealloc(ret, alignment - offset);
-//         ret = (void *)((uintptr_t)ret + (alignment - offset));
-//         trailsize = alloc_size - (alignment - offset) - chunk_size;
-//         if (trailsize != 0) {
-//             //* Trim trailing space. */
-//             assert(trailsize < alloc_size);
-//             chunk_dealloc((void *)((uintptr_t)ret + chunk_size),
-//                           trailsize);
-//         }
-//     }
-//     // Insert node into huge.
-//     node->addr = ret;
-//     node->size = chunk_size;
-//     malloc_mutex_lock(&huge_mtx);
-//     extent_tree_ad_insert(&huge, node);
-// #ifdef MALLOC_STATS
-//     huge_nmalloc++;
-//     huge_allocated += chunk_size;
-// #endif
-//     malloc_mutex_unlock(&huge_mtx);
-//     if (opt_junk)
-//         memset(ret, 0xa5, chunk_size);
-//     else if (opt_zero)
-//         memset(ret, 0, chunk_size);
-//     return (ret);
-// }
+fn huge_palloc(alignment: usize, size: usize) -> ?&u8 {
+    %%io.stdout.printf("TODO: huge_palloc\n");
+    //     void *ret;
+    //     size_t alloc_size, chunk_size, offset;
+    //     extent_node_t *node;
+    //     // This allocation requires alignment that is even larger than chunk
+    //     // alignment.  This means that huge_malloc() isn't good enough.
+    //     //
+    //     // Allocate almost twice as many chunks as are demanded by the size or
+    //     // alignment, in order to assure the alignment can be achieved, then
+    //     // unmap leading and trailing chunks.
+    //     assert(alignment >= chunksize);
+    //     chunk_size = CHUNK_CEILING(size);
+    //     if (size >= alignment)
+    //         alloc_size = chunk_size + alignment - chunksize;
+    //     else
+    //         alloc_size = (alignment << 1) - chunksize;
+    //     // Allocate an extent node with which to track the chunk.
+    //     node = base_node_alloc();
+    //     if (node == null)
+    //         return (null);
+    //     ret = chunk_alloc(alloc_size, false);
+    //     if (ret == null) {
+    //         base_node_dealloc(node);
+    //         return (null);
+    //     }
+    //     offset = (uintptr_t)ret & (alignment - 1);
+    //     assert((offset & chunksize_mask) == 0);
+    //     assert(offset < alloc_size);
+    //     if (offset == 0) {
+    //         // Trim trailing space.
+    //         chunk_dealloc((void *)((uintptr_t)ret + chunk_size), alloc_size
+    //                       - chunk_size);
+    //     } else {
+    //         size_t trailsize;
+    //         // Trim leading space.
+    //         chunk_dealloc(ret, alignment - offset);
+    //         ret = (void *)((uintptr_t)ret + (alignment - offset));
+    //         trailsize = alloc_size - (alignment - offset) - chunk_size;
+    //         if (trailsize != 0) {
+    //             //* Trim trailing space. */
+    //             assert(trailsize < alloc_size);
+    //             chunk_dealloc((void *)((uintptr_t)ret + chunk_size),
+    //                           trailsize);
+    //         }
+    //     }
+    //     // Insert node into huge.
+    //     node->addr = ret;
+    //     node->size = chunk_size;
+    //     malloc_mutex_lock(&huge_mtx);
+    //     extent_tree_ad_insert(&huge, node);
+    // #ifdef MALLOC_STATS
+    //     huge_nmalloc++;
+    //     huge_allocated += chunk_size;
+    // #endif
+    //     malloc_mutex_unlock(&huge_mtx);
+    //     if (opt_junk)
+    //         memset(ret, 0xa5, chunk_size);
+    //     else if (opt_zero)
+    //         memset(ret, 0, chunk_size);
+    //     return (ret);
+    // }
+    return null;
+}
+
 
 // static void *
 // huge_ralloc(void *ptr, size_t size, size_t oldsize) {
 fn huge_ralloc(ptr: &u8, size: usize, oldsize: usize) -> ?&u8 {
     var ret: ?&u8 = null;
-    //     size_t copysize;
-    //     // Avoid moving the allocation if the size class would not change.
-    //     if (oldsize > arena_maxclass &&
-    //         CHUNK_CEILING(size) == CHUNK_CEILING(oldsize)) {
-    //         if (opt_junk && size < oldsize) {
-    //             memset((void *)((uintptr_t)ptr + size), 0x5a, oldsize
-    //                    - size);
-    //         } else if (opt_zero && size > oldsize) {
-    //             memset((void *)((uintptr_t)ptr + oldsize), 0, size
-    //                    - oldsize);
-    //         }
-    //         return (ptr);
-    //     }
-    //     // If we get here, then size and oldsize are different enough that we
-    //     // need to use a different size class.  In that case, fall back to
-    //     // allocating new space and copying.
-    //     ret = huge_malloc(size, false);
-    //     if (ret == null) {
-    //         return (null);
-    //     }
-    //     copysize = (size < oldsize) ? size : oldsize;
-    //     memcpy(ret, ptr, copysize);
-    //     idalloc(ptr);
+    // Avoid moving the allocation if the size class would not change.
+    if (oldsize > arena_maxclass && CHUNK_CEILING(size) == CHUNK_CEILING(oldsize)) {
+        if (opt_junk && size < oldsize) {
+            @memset((&u8)(usize(ptr) + size), 0x5a, oldsize - size);
+        } else if (opt_zero && size > oldsize) {
+            @memset((&u8)(usize(ptr) + oldsize), 0, size - oldsize);
+        }
+        return ptr;
+    }
+    // If we get here, then size and oldsize are different enough that we
+    // need to use a different size class.  In that case, fall back to
+    // allocating new space and copying.
+    ret = huge_malloc(size, false);
+    if (var r ?= ret) {
+        const copysize = if (size < oldsize) size else oldsize;
+        @memcpy(r, ptr, copysize);
+        idalloc(ptr);
+    }
     return ret;
 }
 
