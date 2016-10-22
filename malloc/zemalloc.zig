@@ -1914,6 +1914,10 @@ inline fn arena_run_reg_alloc(run: &arena_run_t, bin: &arena_bin_t) -> ?&u8 {
     return null;
 }
 
+// log2_table allows fast division of a power of two in the
+// [1..128] range.
+//
+// (x / divisor) becomes (x >> log2_table[divisor - 1]).
 const log2_table = []u8 {
     0, 1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5,
@@ -1937,6 +1941,33 @@ inline fn SSIZE_INV(s: usize) -> usize {
     return (((1 << SIZE_INV_SHIFT) / (s << SUBPAGE_2POW)) + 1);
 }
 
+const qsize_invs = []usize {
+    QSIZE_INV(3),
+    QSIZE_INV(4), QSIZE_INV(5), QSIZE_INV(6), QSIZE_INV(7),
+    // if (QUANTUM_2POW < 4) {
+    //     QSIZE_INV(8), QSIZE_INV(9), QSIZE_INV(10), QSIZE_INV(11),
+    //     QSIZE_INV(12),QSIZE_INV(13), QSIZE_INV(14), QSIZE_INV(15)
+    // }
+};
+
+const csize_invs = []usize {
+    CSIZE_INV(3), CSIZE_INV(4), CSIZE_INV(5), CSIZE_INV(6), CSIZE_INV(7)
+};
+
+const ssize_invs = []usize {
+    SSIZE_INV(3),
+    SSIZE_INV(4), SSIZE_INV(5), SSIZE_INV(6), SSIZE_INV(7),
+    SSIZE_INV(8), SSIZE_INV(9), SSIZE_INV(10), SSIZE_INV(11),
+    SSIZE_INV(12), SSIZE_INV(13), SSIZE_INV(14), SSIZE_INV(15),
+    // #if (PAGESIZE_2POW == 13)
+    // ,
+    // SSIZE_INV(16), SSIZE_INV(17), SSIZE_INV(18), SSIZE_INV(19),
+    // SSIZE_INV(20), SSIZE_INV(21), SSIZE_INV(22), SSIZE_INV(23),
+    // SSIZE_INV(24), SSIZE_INV(25), SSIZE_INV(26), SSIZE_INV(27),
+    // SSIZE_INV(28), SSIZE_INV(29), SSIZE_INV(29), SSIZE_INV(30)
+    // #endif
+};
+
 inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, size: usize) {
     var regind = usize(0);
     var elm = usize(0);
@@ -1951,10 +1982,6 @@ inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, s
     // over 20%!
     var diff = usize(usize(ptr) - usize(run) - bin.reg0_offset);
     if ((size & (size - 1)) == 0) {
-        // log2_table allows fast division of a power of two in the
-        // [1..128] range.
-        //
-        // (x / divisor) becomes (x >> log2_table[divisor - 1]).
         if (size <= 128) {
             regind = (diff >> log2_table[size - 1]);
         } else if (size <= 32768) {
@@ -1976,60 +2003,34 @@ inline fn arena_run_reg_dalloc(run: &arena_run_t, bin: &arena_bin_t, ptr: &u8, s
         // We can omit the first three elements, because we never
         // divide by 0, and QUANTUM and 2*QUANTUM are both powers of
         // two, which are handled above.
-        const qsize_invs = []usize {
-                     QSIZE_INV(3),
-                     QSIZE_INV(4), QSIZE_INV(5), QSIZE_INV(6), QSIZE_INV(7),
-                     // if (QUANTUM_2POW < 4) {
-                     //     QSIZE_INV(8), QSIZE_INV(9), QSIZE_INV(10), QSIZE_INV(11),
-                     //     QSIZE_INV(12),QSIZE_INV(13), QSIZE_INV(14), QSIZE_INV(15)
-                     // }
-        };
         // assert(usize(QUANTUM * ((qsize_invs.len / (@sizeOf(usize)) + 3)) >= usize(1 << QSPACE_MAX_2POW_DEFAULT));
-        if (size <= (((qsize_invs.len / @sizeOf(usize)) + 2) << QUANTUM_2POW)) {
+        assert(usize(QUANTUM * (qsize_invs.len + 3)) >= usize(1 << QSPACE_MAX_2POW_DEFAULT));
+        //if (size <= (((qsize_invs.len / @sizeOf(usize)) + 2) << QUANTUM_2POW)) {
+        if (size <= ((qsize_invs.len + 2) << QUANTUM_2POW)) {
             regind = qsize_invs[(size >> QUANTUM_2POW) - 3] * diff;
             regind >>= SIZE_INV_SHIFT;
         } else {
             regind = diff / size;
         }
-        // #undef QSIZE_INV
     } else if (size < cspace_max) {
-        const csize_invs = []usize {
-            CSIZE_INV(3), CSIZE_INV(4), CSIZE_INV(5), CSIZE_INV(6), CSIZE_INV(7)
-        };
-        // assert(CACHELINE * (((sizeof(csize_invs)) / sizeof(unsigned)) +
-        //                     3) >= (1 << CSPACE_MAX_2POW_DEFAULT));
-        if (size <= (((csize_invs.len / @sizeOf(usize)) + 2) << CACHELINE_2POW)) {
+        assert((CACHELINE * (csize_invs.len + 3)) >= (1 << CSPACE_MAX_2POW_DEFAULT));
+        //if (size <= (((csize_invs.len / @sizeOf(usize)) + 2) << CACHELINE_2POW)) {
+        if (size <= ((csize_invs.len + 2) << CACHELINE_2POW)) {
             regind = csize_invs[(size >> CACHELINE_2POW) - 3] * diff;
             regind >>= SIZE_INV_SHIFT;
         } else {
             regind = diff / size;
         }
-        // #undef CSIZE_INV
     } else {
-        const ssize_invs = []usize {
-            SSIZE_INV(3),
-            SSIZE_INV(4), SSIZE_INV(5), SSIZE_INV(6), SSIZE_INV(7),
-            SSIZE_INV(8), SSIZE_INV(9), SSIZE_INV(10), SSIZE_INV(11),
-            SSIZE_INV(12), SSIZE_INV(13), SSIZE_INV(14), SSIZE_INV(15)
-        // #if (PAGESIZE_2POW == 13)
-        // ,
-        // SSIZE_INV(16), SSIZE_INV(17), SSIZE_INV(18), SSIZE_INV(19),
-        // SSIZE_INV(20), SSIZE_INV(21), SSIZE_INV(22), SSIZE_INV(23),
-        // SSIZE_INV(24), SSIZE_INV(25), SSIZE_INV(26), SSIZE_INV(27),
-        // SSIZE_INV(28), SSIZE_INV(29), SSIZE_INV(29), SSIZE_INV(30)
-        // #endif
-        };
-        //         assert(SUBPAGE * (((sizeof(ssize_invs)) / sizeof(unsigned)) + 3)
-        //                >= (1 << PAGESIZE_2POW));
-        if (size < (((ssize_invs.len / @sizeOf(@typeOf(ssize_invs[0]))) + 2) << SUBPAGE_2POW)) {
+        assert((SUBPAGE * (ssize_invs.len + 3)) >= (1 << PAGESIZE_2POW));
+        // if (size < (((ssize_invs.len / @sizeOf(@typeOf(ssize_invs[0]))) + 2) << SUBPAGE_2POW)) {
+        if (size < ((ssize_invs.len + 2) << SUBPAGE_2POW)) {
             regind = ssize_invs[(size >> SUBPAGE_2POW) - 3] * diff;
             regind >>= SIZE_INV_SHIFT;
         } else {
             regind = diff / size;
         }
-        // #undef SSIZE_INV
     }
-    // #undef SIZE_INV_SHIFT
     assert(diff == regind * size);
     assert(regind < bin.nregs);
 
@@ -2682,7 +2683,7 @@ inline fn arena_malloc_small(arena: &arena_t, size: usize, zero: bool) -> ?&u8 {
         if (MALLOC_STATS) {
             bin.stats.nrequests += 1;
             arena.stats.nmalloc_small += 1;
-            arena.stats.allocated_small += size;
+            arena.stats.allocated_small +%= size;
         }
         // #endif
         malloc_spin_unlock(&arena.lock);
@@ -3030,17 +3031,19 @@ inline fn arena_dalloc_small(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, m
             const run_pageind = ((usize(run) - usize(chunk))) >> pagesize_2pow;
             var run_mapelm = &(&chunk.map)[run_pageind];
             // assert(arena_run_tree_search(&bin->runs, run_mapelm) == null);
-            if (var zz ?= bin.runs.search(run_mapelm)) {
-
-            } else {
-                %%io.stdout.printf("Whoops.\n");
+            if (!@compileVar("is_release")) {
+                if (var zz ?= bin.runs.search(run_mapelm)) {
+                    %%io.stdout.printf("Whoops.\n");
+                    @breakpoint();
+                }
             }
             bin.runs.insert(run_mapelm);
         }
     }
     if (MALLOC_STATS) {
-        arena.stats.allocated_small -= size;
-        arena.stats.ndalloc_small += 1;
+        // TODO: We may get negative values...
+        arena.stats.allocated_small -%= size;
+        arena.stats.ndalloc_small +%= 1;
     }
 }
 
@@ -3135,6 +3138,7 @@ fn arena_ralloc_large_grow(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, siz
     const pageind = (usize(ptr) - usize(chunk)) >> pagesize_2pow;
     const npages = oldsize >> pagesize_2pow;
     assert(oldsize == chunk.getbits(pageind) & ~pagesize_mask);
+    // @breakpoint();
     // Try to extend the run.
     assert(size > oldsize);
     if (MALLOC_BALANCE) {
@@ -3145,6 +3149,7 @@ fn arena_ralloc_large_grow(arena: &arena_t, chunk: &arena_chunk_t, ptr: &u8, siz
     // if (pageind + npages < chunk_npages && (chunk->map[pageind+npages].bits
     //                                             & CHUNK_MAP_ALLOCATED) == 0 && (chunk->map[pageind+npages].bits &
     //                                                                             ~pagesize_mask) >= size - oldsize) {
+    // TODO: missing test
     if (pageind + npages < chunk_npages) {
         // The next run is available and sufficiently large.  Split the
         // following run, then merge the first part with the existing
@@ -3816,6 +3821,8 @@ fn malloc_init_hard() -> bool {
     //int linklen;
     //char buf[PATH_MAX + 1];
     //const char *opts;
+    var s: [UMAX2S_BUFSIZE]u8 = zeroes;
+    var ss: [UMAX2S_BUFSIZE]u8 = zeroes;
 
     malloc_mutex_lock(&init_lock);
     if (malloc_initialized) {
@@ -4192,7 +4199,6 @@ fn malloc_init_hard() -> bool {
     //#endif
 
     // Allocate and initialize arenas.
-    // @sizeOf(arena_t or &arena_t)
     if (var a ?= base_alloc(@sizeOf(&arena_t) * narenas)) {
         arenas = (&&arena_t)(a);
     } else {
@@ -4235,8 +4241,10 @@ fn malloc_init_hard() -> bool {
     malloc_initialized = true;
     malloc_mutex_unlock(&init_lock);
     if (!@compileVar("is_release")) {
-        %%io.stdout.printf("malloc initialized\n");
+        %%_malloc_message("narenas=", umax2s(narenas, s), ", ncpus=", umax2s(ncpus, ss));
+        %%_malloc_message("\n", "", "", "malloc initialized\n");
     }
+
     //#if HAVE_THREADS != 0
     if (! HAVE_THREADS) {
         return false;
@@ -4559,47 +4567,50 @@ fn testFFS() {
     }
 }
 
-fn testMallocInit() {
+fn testMalloc() {
     @setFnTest(this, true);
     opt_print_stats = true;     // set to false to go quiet
     MALLOC_STATS = true;
     MALLOC_DEBUG = true;        // Need this for now
-    malloc_init();
-    assert(malloc_initialized == true);
-    var malls: [1024]?&u8 = zeroes;
-    var msize = usize(384);
+    var VERBOSE = u32(0);
+    var malls: [4096]?&u8 = zeroes;
     var s: [UMAX2S_BUFSIZE]u8 = zeroes;
     { var i = usize(0);
-        while (i < 2; i += 1) {
-            for (malls) |*m, x| {
-                    // woot, woot, large arenas (multiple of pagesize)
-                    // apparently working..  smaller size produces
-                    // incorrect allocation, that's basically arenas
-                    // not working on less than pagesize sizes (bin_maxclass)...
-                    *m = je_malloc(msize); // (pagesize * (1 + x));
-                    // msize += 1;
-                    if (var mm ?= *m) {
-                        // %%io.stdout.printf("ok\n");
-                        @memset(mm, 0x5a, msize);
-                        if (x < 4) {
-                            %%_malloc_message("malloc=0x", umaxx2s(usize(*m), s), "\n", "");
+        const maxiter = 512;
+        while (i < maxiter; i += 1) {
+            var j = usize(0);
+            while (j < 2; j += 1) {
+                var msize = usize(1);
+                for (malls) |*m, x| {
+                        *m = je_malloc(x + 1);
+                        if (var mm ?= *m) {
+                            // %%io.stdout.printf("ok\n");
+                            @memset(mm, 0x5a, x + 1);
+                            // if (x < 4) {
+                            //     %%_malloc_message("malloc=0x", umaxx2s(usize(*m), s), "\n", "");
+                            // }
+                        } else {
+                            %%io.stdout.printf("oh no\n");
                         }
-                    } else {
-                        %%io.stdout.printf("oh no\n");
+                        msize +%= 1;
                     }
+                if (i == 0) {
+                    %%malloc_print_stats();
                 }
-            %%malloc_print_stats();
-            for (malls) |*m, x| {
-                    if (var mm ?= *m) {
-                        // %%io.stdout.printf("freeing\n");
-                        if (x < 4) {
-                            %%_malloc_message("free=0x", umaxx2s(usize(*m), s), "\n", "");
+                for (malls) |*m, x| {
+                        if (var mm ?= *m) {
+                            // %%io.stdout.printf("freeing\n");
+                            // if (x < 4) {
+                            //     %%_malloc_message("free=0x", umaxx2s(usize(*m), s), "\n", "");
+                            // }
+                            je_free(mm);
+                            *m = (&u8)(usize(0));
                         }
-                        je_free(mm);
-                        *m = (&u8)(usize(0));
                     }
+                if (i == maxiter - 1) {
+                    %%malloc_print_stats();
                 }
-            %%malloc_print_stats();
+            }
         }
     }
 
