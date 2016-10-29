@@ -11,7 +11,7 @@ shell$ qemu-system-x86_64 -cdrom zigos-x86_64.iso -s -S -no-reboot
 shell$ gdb ./build/bin/kernel-x86_64.bin -ex "set architecture i386:x86-64 ; target remote :1234"
 ```
 
-Some required packages on Linux (this on Linuz Mint 18)
+Some required packages on Linux (this on Linux Mint 18)
 ```
 sudo apt-get install nasm
 sudo apt install xorriso
