@@ -14,7 +14,6 @@ pub const TAttribute = u8;
 pub const TEntry = u16;
 
 pub enum TVGAColor {
-    const Self = this;
     Black,
     Blue,
     Green,
@@ -31,18 +30,18 @@ pub enum TVGAColor {
     LightMagenta,
     Yellow,
     White,
+}
 
-    pub fn nextColor(color: Self) -> TVGAColor {
-        //proc nextColor(color: TVGAColor, skip: set[TVGAColor]): TVGAColor =
-        var result = color;
-        if (color == TVGAColor.White) {
-            result = TVGAColor.Black;
-        } else {
-            result = TVGAColor(u8(color) + 1)
-        }
-        // if result in skip: result = nextColor(result, skip)
-        return result;
+pub fn nextColor(color: TVGAColor) -> TVGAColor {
+    //proc nextColor(color: TVGAColor, skip: set[TVGAColor]): TVGAColor =
+    var result = color;
+    if ((color == TVGAColor.White) || (color == TVGAColor.Black)) {
+        result = TVGAColor.Blue;
+   } else {
+        result = TVGAColor(u8(color) + 1);
     }
+    // if result in skip: result = nextColor(result, skip)
+    return result;
 }
 
 /// Combines a foreground and background color into a ``TAttribute``.
@@ -64,19 +63,24 @@ pub fn writeChar(vram: PVidMem, entry: TEntry, pos: TPos) {
     vram[index] = entry;
 }
 
-// pub fn rainbow(vram: PVidMem, text: []u8, pos: TPos) {
+pub fn rainbow(vram: PVidMem, text: []u8, pos: TPos) {
 //     //## Writes a string at the specified ``pos`` with varying colors which, despite
 //     //## the name of this function, do not resemble a rainbow.
 //     var colorBG = DarkGrey;
 //     var colorFG = Blue;
+    var color = TVGAColor.Blue;
 
 //   // for i in 0 .. text.len-1:
 //   //   colorFG = nextColor(colorFG, {Black, Cyan, DarkGrey, Magenta, Red,
 //   //                                 Blue, LightBlue, LightMagenta})
 //   //   let attr = makeColor(colorBG, colorFG)
 //   //   vram.writeChar(makeEntry(text[i], attr), (pos.x+i, pos.y))
-//     writeString(vram, text, makeColor(), pos);
-// }
+    for (text) |c, i| {
+        const cc = makeColor(TVGAColor.Black, color);
+        writeChar(vram, makeEntry(c, cc), TPos{.x = pos.x + isize(i), .y = pos.y});
+        color = nextColor(color);
+    }
+}
 
 pub fn writeString(vram: PVidMem, text: []u8, color: TAttribute, pos: TPos) {
   //## Writes a string at the specified ``pos`` with the specified ``color``.

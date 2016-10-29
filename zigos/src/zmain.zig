@@ -1,6 +1,7 @@
 const ioutils = @import("ioutils.zig");
 const makeColor = ioutils.makeColor;
 const writeString = ioutils.writeString;
+const rainbow = ioutils.rainbow;
 const screenClear = ioutils.screenClear;
 const PVidMem = ioutils.PVidMem;
 const TPos = ioutils.TPos;
@@ -36,8 +37,9 @@ export nakedcc fn zigmain(mb_header: TMultiboot_header) {
 
     screenClear(vram, TVGAColor.Green);
     const attr = makeColor(TVGAColor.Black, TVGAColor.White);
-    writeString(vram, " Hello from Zig ", attr, mkTPos(10, 9));
-    writeString(vram, " A systems programming language ment to replace C, yay! ", attr, mkTPos(10, 10));
+    rainbow(vram, " ---=== Booted by GRUB ===--- ", mkTPos(10, 10));
+    writeString(vram, " Hello from Zig ", attr, mkTPos(10, 11));
+    writeString(vram, " A systems programming language ment to replace C, yay! ", attr, mkTPos(10, 12));
     writeString(vram, "Returning from Zig, you should see '", makeColor(TVGAColor.Black, TVGAColor.Green), mkTPos(0, 24));
     writeString(vram, "OS returned!", makeColor(TVGAColor.Red, TVGAColor.White), mkTPos(36, 24));
     writeString(vram, "' at top left.", makeColor(TVGAColor.Black, TVGAColor.Green), mkTPos(48, 24));
