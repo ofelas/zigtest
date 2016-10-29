@@ -63,7 +63,7 @@ cargo:
 zig_source_files := zmain.zig builtin.zig
 zig_object_files := $(patsubst %.zig, build/obj/%.o,$(zig_source_files))
 
-build/obj/zmain.o: src/ioutils.zig
+build/obj/zmain.o: src/vgaController.zig
 
 build/obj build/bin:
 	mkdir -p $(@)
