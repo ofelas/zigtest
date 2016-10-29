@@ -27,3 +27,8 @@ See also [liballoc](https://github.com/blanham/liballoc.git) translated to Zig.
 
 See also [webos jemalloc](https://github.com/openwebos/jemalloc).
 Original jemalloc by Jason Evans/FreeBSD.
+
+## zigos
+Mimicing the brilliant Blog OS from [Philipp Oppermann's blog](http://os.phil-opp.com/)
+
+![Zig OS](zigos.png)
