@@ -15,8 +15,6 @@ bits 64
 long_mode_start:
     ; call zig main (with multiboot pointer in rdi)
     ; print "Zig!"
-    mov rax, 0x2f5A2f692f672f21
-    mov qword [0xb8000], rax
     call zigmain
 .os_returned:
     ; zig main returned, print `OS returned!`

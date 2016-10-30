@@ -53,11 +53,10 @@ pub struct VGA {
 
     /// Writes a string at the specified ``pos`` with the specified ``color``.
     pub fn writeString(vga: &Self, text: []u8, color: TAttribute, pos: TPos) {
-    for (text) |c, i| {
-        //for i in 0 .. text.len-1:
-        writeChar(vga, makeEntry(c, color), TPos{.x = pos.x + i, .y = pos.y});
+        for (text) |c, i| {
+            writeChar(vga, makeEntry(c, color), TPos{.x = pos.x + i, .y = pos.y});
+       }
     }
-}
 
 }
 
@@ -90,14 +89,12 @@ pub enum TVGAColor {
     White,
 
     pub fn nextColor(color: Self) -> TVGAColor {
-        //proc nextColor(color: TVGAColor, skip: set[TVGAColor]): TVGAColor =
         var result = color;
         if ((color == TVGAColor.White) || (color == TVGAColor.Black)) {
             result = TVGAColor.Blue;
         } else {
             result = TVGAColor(u8(color) + 1);
         }
-        // if result in skip: result = nextColor(result, skip)
         return result;
     }
 }

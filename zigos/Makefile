@@ -7,6 +7,12 @@
 # option. This file may not be copied, modified, or distributed
 # except according to those terms.
 
+ifeq ($(V),1)
+Q =
+else
+Q = @
+endif
+
 ZIG ?= ~/projects/REPOS/zig/build/bin/zig
 
 arch ?= x86_64
@@ -65,25 +71,24 @@ zig_object_files := $(patsubst %.zig, build/obj/%.o,$(zig_source_files))
 
 build/obj/zmain.o: src/vgaController.zig
 
-build/obj build/bin:
-	mkdir -p $(@)
+build/obj build/bin build/isofiles/boot/grub build/arch/$(arch):
+	$(Q)mkdir -p $(@)
 
+# Cannot build with --release as it crashes for some reason...
 build/obj/%.o: src/%.zig | build/obj
-	$(ZIG) build --export obj --output $(@) --name $(notdir $(subst .o,,$(@))) $(<)
+	$(Q)$(ZIG) build --export obj --output $(@) --name $(notdir $(subst .o,,$(@))) $(<)
 
 $(zkernel): $(assembly_object_files) $(zig_object_files) | build/bin
-	ld -n -T $(linker_script) -o $(zkernel) $(^) # compiler_rt.o
+	$(Q)ld -n -T $(linker_script) -o $(zkernel) $(^) # compiler_rt.o
 
-$(iso): $(zkernel)
-	@mkdir -p build/isofiles/boot/grub
-	@cp $(zkernel) build/isofiles/boot/kernel.bin
-	@cp $(grub_cfg) build/isofiles/boot/grub
-	grub-mkrescue -o $(iso) build/isofiles
-	@echo OK
+$(iso): $(zkernel) | build/isofiles/boot/grub
+	$(Q)cp $(zkernel) build/isofiles/boot/kernel.bin
+	$(Q)cp $(grub_cfg) build/isofiles/boot/grub
+	$(Q)grub-mkrescue -o $(iso) build/isofiles
+	$(Q)echo Now fire up qemu and gdb
 
 zigos: $(iso)
 
 # compile assembly files
-build/arch/$(arch)/%.o: arch/$(arch)/%.asm
-	@mkdir -p $(shell dirname $@)
-	@nasm -felf64 $< -o $@
+build/arch/$(arch)/%.o: arch/$(arch)/%.asm | build/arch/$(arch)
+	$(Q)nasm -felf64 $(<) -o $(@)
