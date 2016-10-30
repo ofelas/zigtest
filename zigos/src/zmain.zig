@@ -28,7 +28,7 @@ inline fn mkTPos(x: u8, y: u8) -> TPos {
 //     unsafe { cr0_write(cr0() | wp_bit) };
 // }
 
-const UMAX2S_BUFSIZE = 21;
+const UMAX2S_BUFSIZE = 33;
 fn umax2s(v: var, s: []u8) -> []u8{
     var i = s.len - 1;
     var x = v;
@@ -67,13 +67,14 @@ export nakedcc fn zigmain() {
 fn zmain(argbase: &u8) {
     var vga: VGA = undefined;
     const attr = makeColor(TVGAColor.Black, TVGAColor.White);
+    const revattr = makeColor(TVGAColor.White, TVGAColor.Black);
     var s: [17]u8 = zeroes;
     // args[1] is reserved and should be 0-zero
     var args: []u32 = undefined;
     args.ptr = (&u32)(usize(argbase));
     args.len = 1;
 
-    const totalSize = args[0];
+    const totalSize = usize(args[0]);
     vga.init();
     vga.clearScreen(TVGAColor.Green);
 
@@ -86,19 +87,62 @@ fn zmain(argbase: &u8) {
         var n = usize(0);
         while (i < totalSize; n += 1) {
             const tag = *(&u32)(usize(ptr));
-            const step = *(&u32)(usize(ptr) + 4);
-            vga.writeString(umax2s(i, s), attr, mkTPos(10, 3 + u8(n % 10)));
-            vga.writeString(umaxx2s(tag, s), attr, mkTPos(20, 3 + u8(n % 10)));
-            vga.writeString(umaxx2s(step, s), attr, mkTPos(30, 3 + u8(n % 10)));
-            vga.writeString(umaxx2s(usize(ptr), s), attr, mkTPos(50, 3 + u8(n % 10)));
-            if (tag == u32(2)) {
-                vga.writeString("Bootloader name present", attr, mkTPos(10, 16));
+            const step = usize(*(&u32)(usize(ptr) + 4));
+            vga.writeString(umax2s(n, s), attr, mkTPos(1, 4 + u8(n % 16)));
+            vga.writeString(umaxx2s(tag, s), attr, mkTPos(4, 4 + u8(n % 16)));
+            vga.writeString(umaxx2s(step, s), attr, mkTPos(14, 4 + u8(n % 16)));
+            vga.writeString(umaxx2s(usize(ptr), s), attr, mkTPos(24, 4 + u8(n % 16)));
+            if (tag == u32(1)) {
+                vga.writeString("CMD line", attr, mkTPos(40, 4+ u8(n % 16)));
+                var ss: [step]u8 = undefined;
+                ss.ptr = (&u8)(usize(ptr) + 8);
+                vga.writeString(ss, attr, mkTPos(48, 4+ u8(n % 16)));
+            } else if (tag == u32(2)) {
+                vga.writeString("Name:", attr, mkTPos(40, 4+ u8(n % 16)));
+                var ss: [step]u8 = undefined;
+                ss.ptr = (&u8)(usize(ptr) + 8);
+                vga.writeString(ss, revattr, mkTPos(45, 4+ u8(n % 16)));
+            } else if (tag == u32(4)) {
+                vga.writeString("Basic meminfo", attr, mkTPos(40, 4+ u8(n % 16)));
+                const memLower = usize(*(&u32)(usize(ptr) + 8));
+                const memUpper = usize(*(&u32)(usize(ptr) + 12));
+                vga.writeString(umax2s(memLower, s), revattr, mkTPos(56, 4+ u8(n % 16)));
+                vga.writeString(umax2s(memUpper, s), revattr, mkTPos(66, 4+ u8(n % 16)));
+            } else if (tag == u32(5)) {
+                vga.writeString("Boot dev", attr, mkTPos(40, 4+ u8(n % 16)));
+                const biosDev = usize(*(&u32)(usize(ptr) + 8));
+                const partition = usize(*(&u32)(usize(ptr) + 12));
+                vga.writeString(umaxx2s(biosDev, s), revattr, mkTPos(56, 4+ u8(n % 16)));
+                vga.writeString(umaxx2s(partition, s), revattr, mkTPos(66, 4+ u8(n % 16)));
+            } else if (tag == u32(6)) {
+                vga.writeString("mmap", attr, mkTPos(40, 4+ u8(n % 16)));
+                const entrySize = usize(*(&u32)(usize(ptr) + 8));
+                const firstBase = usize(*(&u64)(usize(ptr) + 16));
+                const firstLength = usize(*(&u64)(usize(ptr) + 24));
+                const entries = step / entrySize;
+                vga.writeString(umax2s(entries, s), revattr, mkTPos(46, 4+ u8(n % 16)));
+                vga.writeString(umax2s(entrySize, s), revattr, mkTPos(56, 4+ u8(n % 16)));
+                vga.writeString(umaxx2s(firstLength, s), revattr, mkTPos(66, 4+ u8(n % 16)));
+                // vga.writeString(umax2s(entrySize, s), revattr, mkTPos(66, 4+ u8(n % 16)));
+            } else if (tag == u32(8)) {
+                vga.writeString("Alignment", attr, mkTPos(40, 4+ u8(n % 16)));
+            } else if (tag == u32(9)) {
+                vga.writeString("ELF sections", attr, mkTPos(40, 4+ u8(n % 16)));
+                const num = usize(*(&u16)(usize(ptr) + 8));
+                const entrySize = usize(*(&u16)(usize(ptr) + 10));
+                vga.writeString(umax2s(num, s), revattr, mkTPos(56, 4+ u8(n % 16)));
+                vga.writeString(umax2s(entrySize, s), revattr, mkTPos(66, 4+ u8(n % 16)));
+            } else if (tag == u32(10)) {
+                vga.writeString("APM", attr, mkTPos(40, 4 + u8(n % 16)));
+            } else if (tag == u32(14)) {
+                vga.writeString("ACPI (old)", attr, mkTPos(40, 4 + u8(n % 16)));
             } else if (tag == u32(0)) {
                 // end tag
+                vga.writeString("*End*", attr, mkTPos(40, 4 + u8(n % 16)));
                 break;
             }
             i += step;
-            ptr = (&u8)(usize(ptr) + usize(step));
+            ptr = (&u8)(usize(ptr) + step);
             ptr = (&u8)(((usize(ptr) - usize(1)) & ~usize(7)) + usize(8));
             if (i >= totalSize) {
                 break;
@@ -106,7 +150,7 @@ fn zmain(argbase: &u8) {
             // need interrupt handling for this (I guess)...
             //@breakpoint();
         }
-        vga.writeString(umax2s(i, s), attr, mkTPos(20, 3));
+        vga.writeString(umaxx2s(usize(ptr), s), attr, mkTPos(20, 3));
     }
 
 

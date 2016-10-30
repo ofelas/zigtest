@@ -54,6 +54,7 @@ pub struct VGA {
     /// Writes a string at the specified ``pos`` with the specified ``color``.
     pub fn writeString(vga: &Self, text: []u8, color: TAttribute, pos: TPos) {
         for (text) |c, i| {
+            if (c == 0) break;
             writeChar(vga, makeEntry(c, color), TPos{.x = pos.x + i, .y = pos.y});
        }
     }
