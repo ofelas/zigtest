@@ -55,6 +55,26 @@ fn umaxx2s(v: var, s: []u8) -> []u8{
     return s[i...];
 }
 
+inline fn rdtsc() -> u64 {
+    var low: u32 = 0;
+    var high: u32 = 0;
+    // ouput in eax and edx, could probably movl edx...
+    low = asm volatile ("rdtsc" : [low] "={eax}" (-> u32) : [low] "{eax}" (low));
+    // high = asm volatile ("rdtsc" : [high] "={edx}" (-> u32) : [high] "{edx}" (high));
+    high = asm volatile ("movl %%edx,%[high]" : [high] "=r" (-> u32)); //: [high] "{edx}" (high));
+    ((u64(high) << 32) | (u64(low)))
+}
+
+inline fn cpuid(f: u32) -> u32 {
+    // See: https://en.wikipedia.org/wiki/CPUID, there's a boatload of variations...
+    var id: u32 = 0;
+    if (f == 0) {
+        return asm volatile ("cpuid" : [id] "={eax}" (-> u32): [eax] "{eax}" (f) : "ebx", "ecx", "edx");
+    } else {
+        return asm volatile ("cpuid" : [id] "={eax}" (-> u32): [eax] "{eax}" (f));
+    }
+}
+
 var argp: usize = undefined;
 
 // Should get pointer to multiboot header in "edi" register
@@ -75,11 +95,24 @@ fn zmain(argbase: &u8) {
     args.len = 1;
 
     const totalSize = usize(args[0]);
+    var cpu = cpuid(0);
+    var tsc = rdtsc();
     vga.init();
     vga.clearScreen(TVGAColor.Green);
+    vga.writeString("cpuid:", attr, mkTPos(35, 2));
+    vga.writeString("tsc:", attr, mkTPos(35, 23));
+    vga.writeString(umaxx2s(tsc, s), attr, mkTPos(39, 23));
+    vga.writeString(umaxx2s(cpu, s), attr, mkTPos(42, 2));
+    if (cpu == u32(0xd)) {
+        vga.writeString("IvyBridge", attr, mkTPos(62, 2));
+    }
+    cpu = cpuid(1);
 
     vga.writeString("total mbi size:", attr, mkTPos(10, 2));
     vga.writeString(umax2s(totalSize, s), attr, mkTPos(25, 2));
+
+    //vga.writeString("cpuid:", attr, mkTPos(35, 2));
+    vga.writeString(umaxx2s(cpu, s), attr, mkTPos(52, 2));
     args.len = totalSize >> 2;
     {
         var ptr: &u8 = (&u8)(usize(argbase) + 8);
