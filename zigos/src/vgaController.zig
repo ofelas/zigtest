@@ -59,6 +59,12 @@ pub struct VGA {
        }
     }
 
+    pub fn centered(vga: &Self, text: []u8, color: TAttribute, line: usize) {
+        const x = if (text.len >= VGAWidth) 0 else (VGAWidth / 2) - (text.len / 2);
+        const pos = TPos{.x = x, .y = if (line <= VGAHeight) line else VGAHeight};
+        writeString(vga, text, color, pos);
+    }
+
 }
 
 pub struct TPos {
@@ -101,13 +107,13 @@ pub enum TVGAColor {
 }
 
 /// Combines a foreground and background color into a ``TAttribute``.
-pub fn makeColor(bg: TVGAColor, fg: TVGAColor) -> TAttribute {
+pub inline fn makeColor(bg: TVGAColor, fg: TVGAColor) -> TAttribute {
     return TAttribute(u8(fg) | (u8(bg) << 4));
 }
 
 /// Combines a char and a TAttribute into a format which can be
 /// directly written to the Video memory.
-pub fn makeEntry(c: u8, color: TAttribute) -> TEntry {
+pub inline fn makeEntry(c: u8, color: TAttribute) -> TEntry {
     const c16 = u16(c);
     const color16 = u16(color);
     return TEntry(c16 | (color16 << 8));

@@ -76,6 +76,7 @@ build/obj build/bin build/isofiles/boot/grub build/arch/$(arch):
 
 # Cannot build with --release as it crashes for some reason...
 # --target-os freestanding
+# --library-path ../../zig/std 
 build/obj/%.o: src/%.zig | build/obj
 	$(Q)$(ZIG) build --export obj --output $(@) --name $(notdir $(subst .o,,$(@))) $(<)
 
