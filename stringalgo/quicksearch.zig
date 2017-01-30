@@ -5,7 +5,7 @@ const io = @import("std").io;
 
 const ALPHABET_SIZE = @maxValue(u8) + 1;
 
-pub error PatternTooLong;
+error PatternTooLong;
 
 fn pre_quicksearch_badchar(needle: []u8, needlelen: usize, qsBc: []isize) {
     var i = usize(0);
@@ -27,9 +27,12 @@ fn matches(a: []u8, b: []u8, sz: usize) -> bool {
 pub fn quicksearch(needle: []u8, nlen: usize, haystack: []u8, hlen: usize) -> isize {
     if (nlen > hlen) return isize(-2);
 
-    var qsBc: [ALPHABET_SIZE]isize = undefined; // costly
+    var qsBc: [ALPHABET_SIZE]isize = undefined; // costly but safe?
     const endpos: isize = isize(hlen - nlen);
 
+    if (nlen == 0) {
+        return isize(-1);
+    }
     // Preprocessing, (costly stuff) better done once during an init phase
     // e.g. a struct with the pattern and badchar, later maybe...
     //      and it's fairly easy to find all occurances
@@ -51,7 +54,7 @@ pub fn quicksearch(needle: []u8, nlen: usize, haystack: []u8, hlen: usize) -> is
     return isize(-1);
 }
 
-pub struct QuickSearch {
+pub const QuickSearch =  extern struct {
     badchar: [ALPHABET_SIZE]isize,
     searchpos: isize,
     pub patternlen: isize,
@@ -81,4 +84,4 @@ pub struct QuickSearch {
 
         return isize(-1);
     }
-}
+};

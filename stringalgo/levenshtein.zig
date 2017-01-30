@@ -1,5 +1,5 @@
 // -*- mode: zig; -*-
-fn min3(inline T: type, a: T, b: T, c: T) -> T {
+fn min3(comptime T: type, a: T, b: T, c: T) -> T {
     if (a < b) {
         if (a < c) a else c
     } else {
@@ -17,9 +17,16 @@ pub fn wagnerfisher(s1: []u8, s2: []u8) -> usize {
     const s1len = s1.len;
     const s2len = s2.len;
 
-    if ((s1len | s2len) == 0) return 0;
+    if ((s1len == 0) || (s2len == 0)) return 0;
 
-    var column: [(if (s1len > s2len) s1len else s2len) + 1]usize = zeroes;
+    //var column: [(if (s1len > s2len) s1len else s2len) + 1]usize = zeroes;
+    const maxlen: usize = (if (s1len > s2len) s1len else s2len) + usize(1);
+    //var column: [maxlen]usize = []usize{usize(0)} ** maxlen;
+    var column = @alloca(usize, maxlen);
+    for (column) |*b| {
+            *b = 0;
+    }
+
     y = 1;
     while (y <= s1len; y += 1) {
         column[y] = y;

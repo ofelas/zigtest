@@ -11,23 +11,11 @@ const wagnerfisher = levenshtein.wagnerfisher;
 fn test_levenshtein(a: []u8, b: []u8) -> %void {
     var wfl: usize = 0;
     wfl = wagnerfisher(a, b);
-    %%io.stdout.write("'");
-    %%io.stdout.write(a);
-    %%io.stdout.write("' <-> '");
-    %%io.stdout.write(b);
-    %%io.stdout.write("' is ");
-    %%io.stdout.printInt(usize, wfl);
-    %%io.stdout.printf("\n");
-}
-
-fn heading(text: []u8) {
-    %%io.stdout.write("*** ");
-    %%io.stdout.write(text);
-    %%io.stdout.printf(" ***\n");
+    %%io.stdout.printf("'{}' <-> '{}' is {}\n", a, b, wfl);
 }
 
 fn test_all_levenshteins() {
-    heading("Levenshtein tests");
+    %%io.stdout.printf("*** Levenshtein tests ***\n");
     %%test_levenshtein("hello", "hallo");
     %%test_levenshtein("hell", "hallo");
     %%test_levenshtein("hell", "hello");
@@ -59,20 +47,15 @@ fn test_all_levenshteins() {
 fn test_bitap_quicksearch(text: []u8, pattern: []u8) {
     var bix: isize = 0;
     var qix: isize = 0;
+    // handle error?
     bix = %%bitap.bitap_search(text, pattern);
     qix = qs.quicksearch(pattern, pattern.len, text, text.len);
-    %%io.stdout.write("'");
-    %%io.stdout.write(pattern);
-    %%io.stdout.write("' bitap ");
-    %%io.stdout.printInt(isize, bix);
-    %%io.stdout.write(" (qs ");
-    %%io.stdout.printInt(isize, qix);
-    %%io.stdout.write(")");
+    %%io.stdout.printf("'{}' bitap {} (qs {})", pattern, bix, qix);
     if (bix > -1) {
-        %%io.stdout.write(" -> '");
+        // how can printf give us a 'character'?
+        %%io.stdout.printf(" -> '{}/", text[usize(bix)]);
         %%io.stdout.writeByte(text[usize(bix)]);
-        %%io.stdout.write("'");
-        %%io.stdout.printf(", found\n");
+        %%io.stdout.printf("', found\n");
     } else {
         %%io.stdout.printf(", not found\n");
     }
@@ -81,11 +64,10 @@ fn test_bitap_quicksearch(text: []u8, pattern: []u8) {
 fn test_all_bitaps() {
     //            0         1         2         3
     //            0123456789012345678901234567890123456789
-    const text = "this is some text that we will looked at\x00"; // need the 0 termination
-    heading("bitap/quicksearch tests");
-    %%io.stdout.write("Looking in: '");
-    %%io.stdout.write(text);
-    %%io.stdout.printf("'\n");
+    const text = "this is the text that we will look at\x00"; // need the 0 termination
+    %%io.stdout.write("*** bitap/quicksearch tests ***\n");
+    %%io.stdout.write("             0123456789012345678901234567890123456789\n");
+    %%io.stdout.printf("Looking in: '{}'\n", text);
     test_bitap_quicksearch(text, "will");
     test_bitap_quicksearch(text, "wall");
     test_bitap_quicksearch(text, "some");

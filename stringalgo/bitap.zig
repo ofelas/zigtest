@@ -4,21 +4,19 @@ const U8_MAX = @maxValue(u8);
 const BITAP_TYPE = usize;
 const BITAP_BIT_COUNT = BITAP_TYPE.bit_count - 1;
 
-pub error PatternTooLong;
+error PatternTooLong;
+error EmptyInput;
 
 pub fn bitap_search(text: []u8, pattern: []u8) -> %isize {
-    if ((pattern.len == 0) || pattern[0] == 0) return 0;
+    if ((pattern.len == 0) || pattern[0] == 0) return -1; //error.EmptyInput;
     if (pattern.len > BITAP_BIT_COUNT) return error.PatternTooLong;
 
     const m = pattern.len;
-    var R: BITAP_TYPE = ~1;          // Initialize bit array
-    var pattern_mask: [U8_MAX + 1]BITAP_TYPE = undefined;
+    var R: BITAP_TYPE = ~BITAP_TYPE(1);          // Initialize bit array
+    var pattern_mask: [U8_MAX + 1]BITAP_TYPE = []BITAP_TYPE{~BITAP_TYPE(0)} ** (U8_MAX + 1);
     var i: usize = 0;
 
     // Init pattern mask
-    i = 0; while (i <= U8_MAX; i += 1) {
-        pattern_mask[i] = ~0;
-    }
     i = 0; while (i < m; i += 1) {
         pattern_mask[pattern[i]] &= ~(1 << i);
     }
