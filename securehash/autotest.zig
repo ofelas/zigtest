@@ -1,9 +1,11 @@
 // -*- mode:zig; -*-
-const system = switch(@compileVar("os")) {
-    linux => @import("std").linux,
-    darwin => @import("std").darmin,
-    else => @compileError("Unsupported OS"),
-};
+// const system = switch(@compileVar("os")) {
+//     linux => @import("std").linux,
+//     darwin => @import("std").darmin,
+//     else => @compileError("Unsupported OS"),
+// };
+// TODO
+const system = @import("std").linux;
 const debug = @import("std").debug;
 const io = @import("std").io;
 const mem = @import("std").mem;
@@ -14,11 +16,11 @@ const securehash = @import("securehash.zig");
 const sha1 = securehash.sha1;
 
 // 2 MiB -> ok, need to allocate this memory (crashes if in function and too large)
-var databuf: [2 << 20]u8 = undefined; // zeroes?
+// var databuf: [3 << 20]u8 = undefined; // zeroes?
 
 fn contextTester(data: []u8, sz: usize) {
-    var h: [securehash.Sha1DigestSize]securehash.Sha1Digest = zeroes;
-    var d: [securehash.Sha1HexDigestSize]u8 = zeroes;
+    var h: [securehash.Sha1DigestSize]securehash.Sha1Digest = undefined;
+    var d: [securehash.Sha1HexDigestSize]u8 = undefined;
     var sha1ctx: securehash.Sha1Context = undefined;
 
     // %%io.stdout.printInt(usize, sz);
@@ -44,7 +46,7 @@ fn contextTester(data: []u8, sz: usize) {
 
 fn sha1Tester(data: []u8, sz: usize) {
     var h: [securehash.Sha1DigestSize]securehash.Sha1Digest = undefined;
-    var d: [securehash.Sha1HexDigestSize]u8 = zeroes;
+    var d: [securehash.Sha1HexDigestSize]u8 = []u8{0} ** securehash.Sha1HexDigestSize;
     %%sha1(data, sz, h);
     for (h) |v| {
             %%io.stdout.printInt(@typeOf(v), v);
@@ -61,9 +63,11 @@ fn sha1Tester(data: []u8, sz: usize) {
     %%io.stdout.printf("'\n");
 }
 
+const MAP_FAILED = usize(@maxValue(usize));
+
 pub fn main(args: [][] u8) -> %void {
     var h: [securehash.Sha1DigestSize]securehash.Sha1Digest = undefined;
-    var d: [securehash.Sha1HexDigestSize]u8 = zeroes;
+    var d: [securehash.Sha1HexDigestSize]u8 = []u8{0} ** securehash.Sha1HexDigestSize;
 
     if (args.len < 2) {
         var s = "a93tgj0p34jagp9[agjp98ajrhp9aej]";
@@ -88,42 +92,45 @@ pub fn main(args: [][] u8) -> %void {
         for (args[1...]) |arg, i| {
             var input: io.InStream = undefined;
             input.open(arg) %% |err| {
-                %%io.stderr.printf("Unable to open file: ");
-                %%io.stderr.printf(@errorName(err));
-                %%io.stderr.printf("\n");
+                %%io.stderr.printf("Unable to open file: {}\n", @errorName(err));
                 return err;
             }; //else {
             //defer %%input.close();
-            const fsz = %%input.getEndPos();
-            var m = system.mmap(null, fsz, system.MMAP_PROT_READ|system.MMAP_PROT_WRITE,
-                                system.MMAP_MAP_PRIVATE|system.MMAP_MAP_ANON, input.fd, 0);
-            // %%io.stdout.write("m=");
-            // %%io.stdout.printInt(@typeOf(m), m);
-            // %%io.stdout.printf("\n");
-            const sz = input.read(databuf) %% |err| {
-                %%io.stderr.write("Unable to read file: ");
-                %%io.stderr.write(@errorName(err));
-                %%io.stderr.printf("\n");
-                return err;
-            };
-            h = zeroes;
-            d = zeroes;
-            %%securehash.sha1(databuf, fsz, h);
-            securehash.hexdigest(h, d);
-            %%io.stdout.write(d);
-            %%io.stdout.write("  ");
-            %%io.stdout.write(arg);
-            %%io.stdout.write("  # ");
-            %%io.stdout.printInt(usize, fsz);
-            %%io.stdout.write(" bytes");
-            %%io.stdout.printf("\n");
-            system.munmap((&u8)(&m), fsz);
-            input.close() %% |err| {
+            defer input.close() %% |err| {
                 %%io.stderr.write("Unable to close file: ");
                 %%io.stderr.write(@errorName(err));
                 %%io.stderr.printf("\n");
-                return err;
+                //return err;
             };
+            const fsz = %%input.getEndPos();
+            var m = system.mmap(null, fsz, system.MMAP_PROT_READ,
+                                system.MMAP_MAP_PRIVATE, input.fd, 0);
+            if (m == MAP_FAILED) {
+                %%io.stdout.printf("{}\n", m)
+            }
+            //%%io.stdout.write("m=");
+            //%%io.stdout.printInt(@typeOf(m), m);
+            //%%io.stdout.printf("\n");
+            // const sz = input.read(databuf) %% |err| {
+            //     %%io.stderr.write("Unable to read file: ");
+            //     %%io.stderr.write(@errorName(err));
+            //     %%io.stderr.printf("\n");
+            //     return err;
+            // };
+            // h = zeroes;
+            for (h) |*b| *b = 0;
+            //d = zeroes;
+            for (d) |*b| *b = 0;
+            var buf: []u8 = undefined;
+            buf.len = fsz;
+            buf.ptr = (&u8)(m);
+            %%securehash.sha1(buf, fsz, h);
+            securehash.hexdigest(h, d);
+            %%io.stdout.printf("{}  {}  # {} bytes (mmap'd)\n", d, arg, fsz);
+            //%%securehash.sha1(databuf, fsz, h);
+            //securehash.hexdigest(h, d);
+            //%%io.stdout.printf("{}  {}  # {} bytes\n", d, arg, fsz);
+            system.munmap((&u8)(m), fsz);
         }
     }
 

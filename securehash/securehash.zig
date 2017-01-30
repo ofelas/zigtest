@@ -60,12 +60,12 @@ const INIT_STATE = []u32{
 };
 
 //#static_eval_enable(!want_static_eval)
-fn clearBuffer(cb: []Sha1Buffer) {
+inline fn clearBuffer(cb: []Sha1Buffer) {
    for (cb) |*d| { *d = 0 };
 }
 
 //#static_eval_enable(!want_static_eval)
-fn initState(res: []Sha1State) {
+inline fn initState(res: []Sha1State) {
     res[0] = u32(0x67452301);
     res[1] = u32(0xefcdab89);
     res[2] = u32(0x98badcfe);
@@ -74,32 +74,34 @@ fn initState(res: []Sha1State) {
 }
 
 //#static_eval_enable(!want_static_eval)
-fn upperbitmask(bits: u32) -> u32{
+inline fn upperbitmask(bits: u32) -> u32{
    0xffffffff >> bits
 }
 
 //#static_eval_enable(!want_static_eval)
-fn lowerbitmask(bits: u32) -> u32{
+inline fn lowerbitmask(bits: u32) -> u32{
    ((0xffffffff) >> (32 - bits) << (32 - bits))
 }
 
 // circular shift...ror/rol
 //#static_eval_enable(!want_static_eval)
-fn rot(value: u32, bits: u32) -> u32 {
-    const um = upperbitmask(bits);
-    const lm = lowerbitmask(bits);
-    debug.assert(um | lm == 0xffffffff);
-    const v1 = (value & um) << bits;
-    const v2 = (value & lm) >> (32 - bits);
-    v1 | v2
+inline fn rot(value: u32, bits: u32) -> u32 {
+    //const um = upperbitmask(bits);
+    //const lm = lowerbitmask(bits);
+    //debug.assert(um | lm == 0xffffffff);
+    //const v1 = (value & upperbitmask(bits)) << bits;
+    //const v2 = (value & lowerbitmask(bits)) >> (32 - bits);
+    //return v1 | v2;
+    return (value <<% bits) | (value >> (32 - bits));
     //var v: %u32 =% (value <<% bits) | (value >> (32 - bits));
     //return %%v;
+    //return (value << bits) | (value >> (u32)(-(i32)(bits)&31));
 }
 
 error WeHaveABug;
 
 //#static_eval_enable(want_static_eval)
-fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
+inline fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
     var a  = state[0];
     var b = state[1];
     var c = state[2];
@@ -110,9 +112,7 @@ fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
 
     while (round < 16; round += 1) {
         // sha1macro((b & c) | (~b & d), u32(0x5a827999))
-        var v: u32 = rot(a, 5);
-        var t1: u32 = v +% ((b & c) | (~b & d));
-        t1 +%= e +% u32(0x5a827999) +% w[round];
+        const t1 = rot(a, 5) +% ((b & c) | (~b & d)) +% e +% u32(0x5a827999) +% w[round];
         e = d;
         d = c;
         c = rot(b, 30);
@@ -123,8 +123,7 @@ fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
     while (round < 20; round += 1) {
         w[round] = rot((w[round - 3] ^ w[round - 8] ^ w[round - 14] ^ w[round - 16]), 1);
         // sha1macro((b & c) | (~b & d), u32(0x5a827999))
-        var t2 = rot(a, 5);
-        t2 +%= ((b & c) | (~b & d)) +% e +% u32(0x5a827999) +% w[round];
+        const t2 = rot(a, 5) +% ((b & c) | (~b & d)) +% e +% u32(0x5a827999) +% w[round];
         e = d;
         d = c;
         c = rot(b, 30);
@@ -147,8 +146,7 @@ fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
     while (round < 60; round += 1) {
         w[round] = rot((w[round - 3] ^ w[round - 8] ^ w[round - 14] ^ w[round - 16]), 1);
         // sha1macro((b & c) | (b & d) | (c & d), 0x8f1bbcdc)
-        var t6 = rot(a, 5);
-        t6 +%= ((b & c) | (b & d) | (c & d)) +% e +% u32(0x8f1bbcdc) +% w[round];
+        const t6 = rot(a, 5) +% ((b & c) | (b & d) | (c & d)) +% e +% u32(0x8f1bbcdc) +% w[round];
         e = d;
         d = c;
         c = rot(b, 30);
@@ -160,8 +158,7 @@ fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
     {
         w[round] = rot((w[round - 3] ^ w[round - 8] ^ w[round - 14] ^ w[round - 16]), 1);
         // sha1macro(b ^ c ^ d, u32(0xca62c1d6))
-        var t8 = ((b ^ c ^ d));
-        t8 +%= rot(a, 5) +% e +% u32(0xca62c1d6) +% w[round];
+        const t8 = ((b ^ c ^ d)) +% rot(a, 5) +% e +% u32(0xca62c1d6) +% w[round];
         e = d;
         d = c;
         c = rot(b, 30);
@@ -183,14 +180,14 @@ fn innerHash(state: []Sha1State, w: []Sha1Buffer) -> %void {
 }
 
 //#static_eval_enable(!want_static_eval)
-fn align(inline T: type, v: i32, alignment: T) -> T {
+inline fn align(comptime T: type, v: i32, alignment: T) -> T {
     ((alignment - 1) - (T(v) & (alignment - 1))) << (alignment - 1)
 }
 
 //#static_eval_enable(!want_static_eval)
 fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
-    var state: [5]Sha1State = zeroes;
-    var w: [80]Sha1Buffer = zeroes;
+    var state: [5]Sha1State = undefined;
+    var w: [80]Sha1Buffer = undefined;
     const byte_len = sz;
     // the length of the input may be less that 64!? hence i32/isize
     const end_of_full_blocks = i32(byte_len) - 64;
@@ -201,7 +198,6 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
     // for (state) |*d, i| { *d = INIT_STATE[i]; }
     clearBuffer(w);
     //for (w) |*d| { *d = 0 }; // clearBuffer() alternative
-
 
     while (current_block <= end_of_full_blocks) {
         end_current_block = current_block + 64;
@@ -224,7 +220,7 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
     //for (w) |*d| { *d = 0 };
     var last_block_bytes = i32(0);
     while (last_block_bytes < end_current_block) {
-        var value = u32(src[usize(last_block_bytes + current_block)])
+        const value = u32(src[usize(last_block_bytes + current_block)])
                     << ((3 - (u32(last_block_bytes) & 3)) <<% 3);
         // const widx = usize(last_block_bytes >> 2);
         w[usize(last_block_bytes >> 2)] |= value;
@@ -247,13 +243,11 @@ fn computeInternal(src: []const u8, sz: usize, result: []Sha1Digest) -> %void {
     }}
 }
 
-//#static_eval_enable(want_static_eval)
 pub fn sha1(src: []const u8, sz: usize, h: [Sha1DigestSize]Sha1Digest) -> %void {
     computeInternal(src, sz, h)
 }
 
 const HexChars = "0123456789abcdef";
-//#static_eval_enable(want_static_eval)
 pub fn hexdigest(h: [Sha1DigestSize]Sha1Digest, dest: []u8) {
     for (h) |v, i| {
         dest[i << 1] = HexChars[(v & 0xf0) >> 4];
@@ -263,7 +257,7 @@ pub fn hexdigest(h: [Sha1DigestSize]Sha1Digest, dest: []u8) {
 
 
 /// Sha1Context
-pub struct Sha1Context {
+pub const Sha1Context = struct {
     byteoffset: usize,           // current buffer offset
     blockoffset: usize,          // current block offset
     consumed: usize,             // total amount of bytes processed
@@ -361,4 +355,4 @@ pub struct Sha1Context {
         // is it a safety measure to clear the data?
         ctx.init(); // %%innerHash(ctx.state, ctx.buffer);
     }
-}
+};
