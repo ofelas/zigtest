@@ -93,6 +93,9 @@ const powers_ten = []Fp {
     mkFP(12648080533535911531, 1066)
 };
 
+//const BUFTYPE = [24]u8;
+pub const BUFTYPE = []u8;
+
 const one_log_ten: f64 = 0.30102999566398114;
 
 fn findCachedPow10(exp: i32, k: &i32) -> Fp {
@@ -441,7 +444,7 @@ fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: 
     return idx - ofs;
 }
 
-fn filter_special(fp: f64, bits: u64, dest: [24]u8, ofs: usize) -> usize {
+fn filter_special(fp: f64, bits: u64, dest: BUFTYPE, ofs: usize) -> usize {
 
     if (fp == 0.0) {
         dest[0] = '0';
@@ -466,7 +469,7 @@ fn filter_special(fp: f64, bits: u64, dest: [24]u8, ofs: usize) -> usize {
     return 3;
 }
 
-pub fn zfpconv_dtoa(d: f64, dest: [24]u8) -> usize {
+pub fn zfpconv_dtoa(d: f64, dest: []u8) -> usize {
     var digits: [24]u8 = undefined;
 
     var str_len: usize = 0;

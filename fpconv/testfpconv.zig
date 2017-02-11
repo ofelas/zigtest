@@ -16,7 +16,7 @@ const zfpconv_dtoa = zfp.zfpconv_dtoa;
 const buildstyle = if (@compileVar("is_release")) "Release" else "Debug";
 
 pub fn printSizedString(buf: []u8, sz: usize, stream: io.OutStream) -> %void {
-    // canot printf to const OutStream
+    // cannot printf to const OutStream
     var s = stream;
     for (buf) |c, i| {
         if (i == sz) break;
@@ -25,14 +25,13 @@ pub fn printSizedString(buf: []u8, sz: usize, stream: io.OutStream) -> %void {
     %%s.printf(" ({} bytes)", sz);
 }
 
-fn reverseConvert(buf: [24]u8, sz: usize, value: f64) -> %void {
+fn reverseConvert(buf: zfp.BUFTYPE, sz: usize, value: f64) -> %void {
     var v: f64 = undefined;
     var nbuf: [24]u8 = undefined;
     buf[sz] = 0;
     v = %%fast_atof.zatod(buf);
     const nsz: usize = zfpconv_dtoa(v, nbuf);
     const cmp = mem.cmp(u8, buf[0...sz], nbuf[0...nsz]);
-    %%io.stdout.write("Reverse\n");
     %%io.stdout.printf("R Converting with zatod '{}' ({} bytes) => '{}' ({} bytes)\n",
                        buf, sz, nbuf, nsz);
     // Why must these arguments have the same size?
@@ -83,8 +82,7 @@ pub fn main(args: [][] u8) -> %void {
         }
     }
     else {
-        %%io.stderr.printf("Using C implementation, {}" ++
-                           " build, please wait...\n", buildstyle);
+        %%io.stderr.printf("Using C implementation, {} build, please wait...\n", buildstyle);
         { var n: f64 = 0.33; iterations=0;
             while (iterations < test_iterations; iterations += 1) {
                 sz +%= usize(fpconv_dtoa(n, &buf[0]));
