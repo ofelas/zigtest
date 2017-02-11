@@ -11,12 +11,12 @@
 //
 
 //#define white_space(c) ((c) == ' ' || (c) == '\t')
-fn white_space(c: u8) -> bool { c == ' ' || c == '\t' }
+inline fn white_space(c: u8) -> bool { c == ' ' || c == '\t' }
 
 //#define valid_digit(c) ((c) >= '0' && (c) <= '9')
-fn valid_digit(c: u8) -> bool { (c >= '0' && c <= '9') }
+inline fn valid_digit(c: u8) -> bool { (c >= '0' && c <= '9') }
 
-pub error BadFloatString;
+error BadFloatString;
 
 pub fn zatod(p: []const u8) -> %f64 {
     var frac: i32 = 0;

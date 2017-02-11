@@ -37,10 +37,10 @@ const Exponent = i32;
 const expmax: Exponent = -32;
 const expmin: Exponent = -60;
 
-struct Fp {
+const Fp = struct {
     frac: Fraction,
     exp: Exponent,
-}
+};
 
 fn mkFP(f: Fraction, e: Exponent) -> Fp {
     return Fp { .frac = f, .exp = e, };
@@ -123,14 +123,14 @@ const fracmask  =  0x000FFFFFFFFFFFFF;
 const expmask   =  0x7FF0000000000000;
 const hiddenbit =  0x0010000000000000;
 const signmask  =  0x8000000000000000;
-const  expbias  = 1023 + 52;
+const expbias   = 1023 + 52;
 
 // new type inference
-fn absv(n: var) -> @typeOf(n) {
+inline fn absv(n: var) -> @typeOf(n) {
   if (n < 0) -n else n
 }
 // new type inference
-fn minv(a: var, b: var) -> @typeOf(a + b) {
+inline fn minv(a: var, b: var) -> @typeOf(a + b) {
     if (a < b) a else b
 }
 
@@ -163,7 +163,7 @@ const tens = []u64 {
 //     i: u64,
 // }
 
-fn get_dbits(d: f64) -> u64 {
+inline fn get_dbits(d: f64) -> u64 {
     //var dbl_bits = DU {.dbl = d, .i = u64(d) };
     const d_as_slice = (&u8)(&d);
     var result: u64 = undefined;
@@ -180,7 +180,7 @@ fn get_dbits(d: f64) -> u64 {
     result
 }
 
-fn build_fp(dbits: u64) -> Fp {
+inline fn build_fp(dbits: u64) -> Fp {
     var fp = Fp { .frac = dbits & fracmask, .exp = i32((dbits & expmask) >> 52) };
 
     if (fp.exp != 0) {
@@ -194,7 +194,7 @@ fn build_fp(dbits: u64) -> Fp {
     return fp;
 }
 
-fn fp_normalize(fp: &Fp) -> void {
+inline fn fp_normalize(fp: &Fp) -> void {
     while ((fp.frac & hiddenbit) == 0) {
         fp.frac <<= 1;
         fp.exp -= 1;
@@ -220,7 +220,7 @@ fn fp_get_normalized_boundaries(fp: &Fp, lower: &Fp, upper: &Fp) -> void {
     upper.exp = upper.exp - u_shift;
 
 
-    const l_shift: i32 = if (fp.frac == hiddenbit) 2 else 1;
+    const l_shift: i32 = if (fp.frac == hiddenbit) i32(2) else i32(1);
 
     lower.frac = (fp.frac << u64(l_shift)) - 1;
     lower.exp = fp.exp - l_shift;
@@ -247,7 +247,7 @@ fn fp_multiply(a: &Fp, b: &Fp) -> Fp {
     }
 }
 
-fn round_digit(digits: []u8, ndigits: i32, delta: u64, rem: u64, kappa: u64, frac: u64) -> void {
+inline fn round_digit(digits: []u8, ndigits: i32, delta: u64, rem: u64, kappa: u64, frac: u64) -> void {
     var lrem = rem;
     while ((lrem < frac) && ((delta - lrem) >= kappa) &&
            (((lrem + kappa) < frac) || ((frac - lrem) > (lrem + kappa - frac)))) {
@@ -411,7 +411,7 @@ fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: 
     dest[idx] = 'e';
     idx += 1;
 
-    const sign: u8 = if ((K + ldigits - 1) < 0) '-' else '+';
+    const sign: u8 = if ((K + ldigits - 1) < 0) u8('-') else u8('+');
     dest[idx] = sign;
     idx += 1;
 
@@ -428,7 +428,7 @@ fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: 
         const dec = u8(exp / 10);
         dest[idx] = dec + '0';
         idx += 1;
-        exp -= dec * 10;
+        exp -= i32(dec * 10);
     } else if (cent != 0) {
         dest[idx] = '0';
         idx += 1;

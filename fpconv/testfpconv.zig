@@ -15,30 +15,14 @@ const zfpconv_dtoa = zfp.zfpconv_dtoa;
 
 const buildstyle = if (@compileVar("is_release")) "Release" else "Debug";
 
-pub fn printNamedInt(n: var, name: []u8) -> %void {
-    // TODO determine if const exprs are equal
-    //    switch (@typeOf(n)) {
-    //        u8, u16, u32, u64, usize, i8, i16, i32, i64, isize => {
-    %%io.stdout.write(name);
-    %%io.stdout.writeByte('=');
-    %%io.stdout.printInt(@typeOf(n), n);
-    %%io.stdout.printf("\n");
-    //        },
-    //        f32, f64 => {},
-    //        else => {
-    //            %%io.stdout.printf("unsupported type\n");
-    //        },
-    //    }
-}
-
 pub fn printSizedString(buf: []u8, sz: usize, stream: io.OutStream) -> %void {
+    // canot printf to const OutStream
+    var s = stream;
     for (buf) |c, i| {
         if (i == sz) break;
-        %%stream.writeByte(c);
+        %%s.writeByte(c);
     }
-    %%stream.write(" (");
-    %%stream.printInt(usize, sz);
-    %%stream.printf(" bytes)\n");
+    %%s.printf(" ({} bytes)", sz);
 }
 
 fn reverseConvert(buf: [24]u8, sz: usize, value: f64) -> %void {
@@ -46,18 +30,19 @@ fn reverseConvert(buf: [24]u8, sz: usize, value: f64) -> %void {
     var nbuf: [24]u8 = undefined;
     buf[sz] = 0;
     v = %%fast_atof.zatod(buf);
-    %%io.stdout.write("Converting with zatod ");
-    %%printSizedString(buf, sz, io.stdout);
-    var nsz: usize = zfpconv_dtoa(v, nbuf);
-    %%printSizedString(nbuf, nsz, io.stdout);
-    var cmp = mem.cmp(u8, buf[0...sz], nbuf[0...nsz]);
-    %%io.stdout.printf(if (cmp == Cmp.Equal) "" else "NOT ");
-    %%io.stdout.printf("equal\n---\n");
+    const nsz: usize = zfpconv_dtoa(v, nbuf);
+    const cmp = mem.cmp(u8, buf[0...sz], nbuf[0...nsz]);
+    %%io.stdout.write("Reverse\n");
+    %%io.stdout.printf("R Converting with zatod '{}' ({} bytes) => '{}' ({} bytes)\n",
+                       buf, sz, nbuf, nsz);
+    // Why must these arguments have the same size?
+    // error: incompatible types: '[0]u8' and '[4]u8'
+    %%io.stdout.printf("{}equal X\n---\n", if (cmp == Cmp.Equal) "    " else "NOT ");
 }
 
 fn testConversion(value: f64) -> %void {
     var buf: [24]u8 = undefined;
-    var cbuf: [24]u8 = zeroes;
+    var cbuf: [24]u8 = []u8{0} ** 24;
     var sz = zfpconv_dtoa(value, buf);
     var v: c_int = fpconv_dtoa(value, &cbuf[0]);
     %%io.stdout.write("using fpconv_dtoa -> ");
@@ -93,20 +78,20 @@ pub fn main(args: [][] u8) -> %void {
                 sz +%= zfpconv_dtoa(n, buf);
                 n += 1.33;
             };
-            %%printNamedInt(iterations, "zfpconv_dtoa iterations executed");
-            %%printNamedInt(sz, "zfpconv_dtoa bytes produced");
+            %%io.stdout.printf("zfpconv_dtoa iterations executed={}\n", iterations);
+            %%io.stdout.printf("zfpconv_dtoa bytes produced={}\n", sz);
         }
     }
     else {
-        %%io.stderr.printf("Using C implementation, " ++ buildstyle
-                           ++ " build, please wait...\n");
+        %%io.stderr.printf("Using C implementation, {}" ++
+                           " build, please wait...\n", buildstyle);
         { var n: f64 = 0.33; iterations=0;
             while (iterations < test_iterations; iterations += 1) {
                 sz +%= usize(fpconv_dtoa(n, &buf[0]));
                 n += 0.33;
             };
-            %%printNamedInt(iterations, "fpconv_dtoa iterations executed");
-            %%printNamedInt(sz, "fpconv_dtoa bytes produced");
+            %%io.stdout.printf("fpconv_dtoa iterations executed={}\n", iterations);
+            %%io.stdout.printf("fpconv_dtoa bytes produced={}\n", sz);
         }
     }
 }
