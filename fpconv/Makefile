@@ -4,18 +4,22 @@ ZIG ?= ~/projects/REPOS/zig/build/bin/zig
 CC ?= gcc
 COPT ?= -O3 -ggdb -Wall
 
-PROGPREFIX := testfpconv
+ifneq ($(EMACS),)
+ZEXTRA_FLAGS = --color off
+endif
 
+PROGPREFIX := testfpconv
 PROGS := $(PROGPREFIX)_dbg $(PROGPREFIX)_rel
+DEPS = Makefile $(ZIG)
 
 all: $(PROGS)
 
-$(PROGPREFIX)_dbg.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig Makefile
-	$(ZIG) build --static --export obj --name $(@) $(<)
+$(PROGPREFIX)_dbg.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig $(DEPS)
+	$(ZIG) build $(ZEXTRA_FLAGS) --static --export obj --name $(@) $(<)
 	-cp $(PROGPREFIX)_dbg.o.o $(PROGPREFIX)_dbg.o
 
-$(PROGPREFIX)_rel.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig Makefile
-	$(ZIG) build --release --static --export obj --name $(@) $(<)
+$(PROGPREFIX)_rel.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig $(DEPS)
+	$(ZIG) build $(ZEXTRA_FLAGS) --release --static --export obj --name $(@) $(<)
 	-cp $(PROGPREFIX)_rel.o.o $(PROGPREFIX)_rel.o
 
 $(PROGPREFIX)_dbg: $(PROGPREFIX)_dbg.o fpconv.o fast_atof.o
