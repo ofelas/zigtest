@@ -11,10 +11,10 @@
 //
 
 //#define white_space(c) ((c) == ' ' || (c) == '\t')
-inline fn white_space(c: u8) -> bool { c == ' ' || c == '\t' }
+inline fn white_space(c: u8) -> bool { c == ' ' or c == '\t' }
 
-//#define valid_digit(c) ((c) >= '0' && (c) <= '9')
-inline fn valid_digit(c: u8) -> bool { (c >= '0' && c <= '9') }
+//#define valid_digit(c) ((c) >= '0' || (c) <= '9')
+inline fn valid_digit(c: u8) -> bool { (c >= '0' and c <= '9') }
 
 error BadFloatString;
 
@@ -27,8 +27,8 @@ pub fn zatod(p: []const u8) -> %f64 {
     const end = p.len;
 
     // Skip leading white space, if any.
-    while ((idx < end) && white_space(p[idx]); idx += 1 ) {}
-    if ((idx == end) || (p[idx] == 0)) return value; // or possibly an error
+    while ((idx < end) and white_space(p[idx])) : (idx += 1) {}
+    if ((idx == end) or (p[idx] == 0)) return value; // or possibly an error
 
     // Get sign, if any.
     if (p[idx] == '-') {
@@ -39,7 +39,7 @@ pub fn zatod(p: []const u8) -> %f64 {
     }
 
     // Get digits before decimal point or exponent, if any.
-    while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
+    while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
        value = value * 10.0 + f64(p[idx] - '0');
     }
 
@@ -47,7 +47,7 @@ pub fn zatod(p: []const u8) -> %f64 {
     if (p[idx] == '.') {
         var pow10: f64 = 10.0;
         idx += 1;
-        while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
+        while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
             value += f64(p[idx] - '0') / pow10;
             pow10 *= 10.0;
         }
@@ -55,7 +55,7 @@ pub fn zatod(p: []const u8) -> %f64 {
 
     if (idx < end) {
         // Handle exponent, if any.
-        if ((p[idx] == 'e') || (p[idx] == 'E')) {
+        if ((p[idx] == 'e') or (p[idx] == 'E')) {
             var expon: u64 = 0;
 
             // Get sign of exponent, if any.
@@ -70,7 +70,7 @@ pub fn zatod(p: []const u8) -> %f64 {
                 }
 
                 // Get digits of exponent, if any.
-                while ((idx < end) && (valid_digit(p[idx])); idx += 1) {
+                while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
                     expon = expon * 10 + @typeOf(expon)(p[idx] - '0');
                 }
             }

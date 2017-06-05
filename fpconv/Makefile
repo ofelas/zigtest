@@ -15,12 +15,12 @@ DEPS = Makefile $(ZIG)
 all: $(PROGS)
 
 $(PROGPREFIX)_dbg.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig $(DEPS)
-	$(ZIG) build $(ZEXTRA_FLAGS) --static --export obj --name $(@) $(<)
-	-cp $(PROGPREFIX)_dbg.o.o $(PROGPREFIX)_dbg.o
+	$(ZIG) build_obj $(ZEXTRA_FLAGS) --static --name $(@) $(<)
+	-cp zig-cache/$(PROGPREFIX)_dbg.o.o $(PROGPREFIX)_dbg.o
 
 $(PROGPREFIX)_rel.o: $(PROGPREFIX).zig zfpconv.zig zfast_atof.zig $(DEPS)
-	$(ZIG) build $(ZEXTRA_FLAGS) --release --static --export obj --name $(@) $(<)
-	-cp $(PROGPREFIX)_rel.o.o $(PROGPREFIX)_rel.o
+	$(ZIG) build_obj $(ZEXTRA_FLAGS) --release-fast --static --name $(@) $(<)
+	-cp zig-cache/$(PROGPREFIX)_rel.o.o $(PROGPREFIX)_rel.o
 
 $(PROGPREFIX)_dbg: $(PROGPREFIX)_dbg.o fpconv.o fast_atof.o
 	$(CC) -nostartfiles  $(^) -o $(@)

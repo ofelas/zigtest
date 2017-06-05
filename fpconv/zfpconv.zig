@@ -1,5 +1,7 @@
 // -*- mode:zig; -*-
 
+const builtin = @import("builtin");
+
 // This is based on C source with the follwoing license information.
 
 // The MIT License
@@ -94,13 +96,13 @@ const powers_ten = []Fp {
 };
 
 //const BUFTYPE = [24]u8;
-pub const BUFTYPE = []u8;
+pub const BUFTYPE = [24]u8;
 
 const one_log_ten: f64 = 0.30102999566398114;
 
 fn findCachedPow10(exp: i32, k: &i32) -> Fp {
     const approx: i32 = i32(@typeOf(one_log_ten)(-(exp + npowers)) * one_log_ten);
-    var idx: usize = usize((approx - firstpower) / steppowers);
+    var idx: usize = usize(@divFloor((approx - firstpower), steppowers));
 
     while (true) {
         const current: Exponent = exp + powers_ten[idx].exp + 64;
@@ -161,17 +163,18 @@ const tens = []u64 {
 };
 
 // TODO: union
-// struct DU {
-//     dbl: f64,
-//     i: u64,
-// }
+// const DU = union {
+//    dbl: f64,
+//    i: u64,
+// };
 
 inline fn get_dbits(d: f64) -> u64 {
     //var dbl_bits = DU {.dbl = d, .i = u64(d) };
-    const d_as_slice = (&u8)(&d);
+    var dd = d;
+    const d_as_slice = @ptrCast(&u8, &dd);
     var result: u64 = undefined;
-    const result_slice = ([]u8)((&result)[0...1]);
-    if (@compileVar("is_big_endian") == false) {
+    const result_slice = ([]u8)((&result)[0..1]);
+    if (builtin.is_big_endian == false) {
         for (result_slice) |*b, i| {
             *b = d_as_slice[i];
         }
@@ -250,17 +253,17 @@ fn fp_multiply(a: &Fp, b: &Fp) -> Fp {
     }
 }
 
-inline fn round_digit(digits: []u8, ndigits: i32, delta: u64, rem: u64, kappa: u64, frac: u64) -> void {
+inline fn round_digit(digits: &[24]u8, ndigits: i32, delta: u64, rem: u64, kappa: u64, frac: u64) -> void {
     var lrem = rem;
-    while ((lrem < frac) && ((delta - lrem) >= kappa) &&
-           (((lrem + kappa) < frac) || ((frac - lrem) > (lrem + kappa - frac)))) {
+    while ((lrem < frac) and ((delta - lrem) >= kappa) and
+           (((lrem + kappa) < frac) or ((frac - lrem) > (lrem + kappa - frac)))) {
 
-        digits[usize(ndigits - 1)] -= 1;
+        (*digits)[usize(ndigits - 1)] -= 1;
         lrem += kappa;
     }
 }
 
-fn fp_generate_digits(fp: &Fp, upper: &Fp, lower: &Fp, digits: []u8, K: &i32) -> i32 {
+fn fp_generate_digits(fp: &Fp, upper: &Fp, lower: &Fp, digits: &[24]u8, K: &i32) -> i32 {
     var wfrac: Fraction = upper.frac - fp.frac;
     var delta: Fraction = upper.frac - lower.frac;
     const one = Fp {.frac = 1 << u64(-upper.exp), .exp  = upper.exp };
@@ -269,12 +272,12 @@ fn fp_generate_digits(fp: &Fp, upper: &Fp, lower: &Fp, digits: []u8, K: &i32) ->
     var idx: i32 = 0;
     var kappa: i32 = 10;
 
-    {var tidx: usize = 10; while (kappa > 0; tidx += 1) {
+    {var tidx: usize = 10; while (kappa > 0) : (tidx += 1) {
         const div = tens[tidx];
         var digit: u64 = part1 / div;
 
-        if ((digit > 0) || (idx > 0)) {
-            digits[usize(idx)] = @truncate(u8, digit) + '0';
+        if ((digit > 0) or (idx > 0)) {
+            (*digits)[usize(idx)] = @truncate(u8, digit) + '0';
             idx += 1;
         }
 
@@ -292,15 +295,15 @@ fn fp_generate_digits(fp: &Fp, upper: &Fp, lower: &Fp, digits: []u8, K: &i32) ->
 
     // 10
     var unitidx: usize = 18;
-    while (true; unitidx -= 1) {
+    while (true) : (unitidx -= 1) {
         const unit: u64 = tens[unitidx];
         part2 *= 10;
         delta *= 10;
         kappa -= 1;
 
         const digit: usize = part2 >> @typeOf(part2)(-one.exp);
-        if ((digit != 0) || (idx != 0)) {
-            digits[usize(idx)] = @truncate(u8, digit) + '0';
+        if ((digit != 0) or (idx != 0)) {
+            (*digits)[usize(idx)] = @truncate(u8, digit) + '0';
             idx += 1;
         }
 
@@ -314,7 +317,7 @@ fn fp_generate_digits(fp: &Fp, upper: &Fp, lower: &Fp, digits: []u8, K: &i32) ->
     }
 }
 
-fn zgrisu2(d: f64, digits: []u8, dbits: u64, K: &i32) -> i32 {
+fn zgrisu2(d: f64, digits: &[24]u8, dbits: u64, K: &i32) -> i32 {
     var w: Fp = build_fp(dbits);
     var lower: Fp = undefined;
     var upper: Fp = undefined;
@@ -337,39 +340,39 @@ fn zgrisu2(d: f64, digits: []u8, dbits: u64, K: &i32) -> i32 {
     return fp_generate_digits(&w, &upper, &lower, digits, K);
 }
 
-fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: bool) -> usize {
+fn emit_digits(digits: &const [24]u8, ndigits: i32, dest: &[24]u8, ofs: usize, K: i32, neg: bool) -> usize {
     var exp: i32 = absv(K + ndigits - 1);
     var ldigits = ndigits;
     var idx: usize = ofs;
 
     // write plain integer
-    if((K >= 0) && (exp < (ndigits + 7))) {
-        { var todo: usize = 0; while (todo < usize(ndigits); todo += 1) {
-             dest[idx] = digits[todo];
+    if ((K >= 0) and (exp < (ndigits + 7))) {
+        { var todo: usize = 0; while (todo < usize(ndigits)) : (todo += 1) {
+             (*dest)[idx] = (*digits)[todo];
              idx += 1;
         }}
         //@memset(&dest[idx+usize(ndigits)], '0', usize(K));
         // ziggish highlevel memset
-        for (dest[idx...idx+usize(K)]) |*b| *b = '0';
+        for ((*dest)[idx..idx+usize(K)]) |*b| *b = '0';
         idx += usize(K);
 
         return idx - ofs;
     }
 
     // write decimal w/o scientific notation
-    if ((K < 0) && ((K > -7) || (exp < 4))) {
+    if ((K < 0) and ((K > -7) or (exp < 4))) {
         var offset: i32 = ndigits - absv(K);
         // fp < 1.0 -> write leading zero
         if (offset <= 0) {
             offset = -offset;
-            dest[idx] = '0';
-            dest[idx + 1] = '.';
+            (*dest)[idx] = '0';
+            (*dest)[idx + 1] = '.';
             idx += 2;
-            for (dest[2...2+usize(offset)]) |*b| *b = '0';
+            for ((*dest)[2..2+usize(offset)]) |*b| *b = '0';
             const idxofs = usize(offset);
-            for (digits) |c, i| {
+            for (*digits) |c, i| {
                 if (i == usize(ndigits)) break;
-                dest[idx + idxofs + i] = c;
+                (*dest)[idx + idxofs + i] = c;
             }
             idx += usize(ndigits);
 
@@ -378,16 +381,16 @@ fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: 
         // fp > 1.0
         } else {
             // get the first number of chars from digits
-            {var todo: usize = 0; while (todo < usize(offset); todo += 1) {
-                dest[idx] = digits[todo];
+            {var todo: usize = 0; while (todo < usize(offset)) : (todo += 1) {
+                (*dest)[idx] = (*digits)[todo];
                 idx += 1;
             }}
             // add a '.'
-            dest[idx] = '.';
+            (*dest)[idx] = '.';
             idx += 1;
             // then get the rest, which seems to work
-            {var todo: usize = 0; while (todo < usize(ndigits - offset); todo += 1) {
-                dest[idx] = digits[usize(offset) + todo];
+            {var todo: usize = 0; while (todo < usize(ndigits - offset)) : (todo += 1) {
+                (*dest)[idx] = (*digits)[usize(offset) + todo];
                 idx += 1;
             }}
 
@@ -399,55 +402,57 @@ fn emit_digits(digits: []u8, ndigits: i32, dest: []u8, ofs: usize, K: i32, neg: 
     // use ldigits from here on (ndigits is read-only)
     ldigits = minv(ndigits, 18 - @typeOf(ndigits)(neg));
 
-    dest[idx] = digits[0];
+    // this should fail during compilation!?!
+    // dest[idx] = digits[0];
+    (*dest)[idx] = (*digits)[0];
     idx += 1;
 
     if (ldigits > 1) {
-        dest[idx] = '.';
+        (*dest)[idx] = '.';
         idx += 1;
-        {var todo: usize = 0; while (todo < usize(ldigits - 1); todo += 1) {
-            dest[idx] = digits[todo];
+        {var todo: usize = 0; while (todo < usize(ldigits - 1)) : (todo += 1) {
+            (*dest)[idx] = (*digits)[todo];
             idx += 1;
         }}
     }
 
-    dest[idx] = 'e';
+    (*dest)[idx] = 'e';
     idx += 1;
 
     const sign: u8 = if ((K + ldigits - 1) < 0) u8('-') else u8('+');
-    dest[idx] = sign;
+    (*dest)[idx] = sign;
     idx += 1;
 
     var cent: i32 = 0;
 
     if(exp > 99) {
-        cent = exp / 100;
-        dest[idx] = u8(cent) + '0';
+        cent = @divFloor(exp, 100);
+        (*dest)[idx] = u8(cent) + '0';
         idx += 1;
         exp -= cent * 100;
     }
 
     if(exp > 9) {
-        const dec = u8(exp / 10);
-        dest[idx] = dec + '0';
+        const dec = u8(@divFloor(exp, 10));
+        (*dest)[idx] = dec + '0';
         idx += 1;
         exp -= i32(dec * 10);
     } else if (cent != 0) {
-        dest[idx] = '0';
+        (*dest)[idx] = '0';
         idx += 1;
     }
 
-    dest[idx] = u8(exp % 10) + '0';
+    (*dest)[idx] = u8(@mod(exp, 10)) + '0';
     idx += 1;
 
     // return the number of digits emitted
     return idx - ofs;
 }
 
-fn filter_special(fp: f64, bits: u64, dest: BUFTYPE, ofs: usize) -> usize {
+fn filter_special(fp: f64, bits: u64, dest: &BUFTYPE, ofs: usize) -> usize {
 
     if (fp == 0.0) {
-        dest[0] = '0';
+        (*dest)[0] = '0';
         return 1;
     }
 
@@ -460,16 +465,16 @@ fn filter_special(fp: f64, bits: u64, dest: BUFTYPE, ofs: usize) -> usize {
     }
 
     if ((bits & fracmask) != 0) {
-        dest[ofs] = 'n'; dest[ofs + 1] = 'a'; dest[ofs + 2] = 'n';
+        (*dest)[ofs] = 'n'; (*dest)[ofs + 1] = 'a'; (*dest)[ofs + 2] = 'n';
 
     } else {
-        dest[ofs] = 'i'; dest[ofs + 1] = 'n'; dest[ofs + 2] = 'f';
+        (*dest)[ofs] = 'i'; (*dest)[ofs + 1] = 'n'; (*dest)[ofs + 2] = 'f';
     }
 
     return 3;
 }
 
-pub fn zfpconv_dtoa(d: f64, dest: []u8) -> usize {
+pub fn zfpconv_dtoa(d: f64, dest: &[24]u8) -> usize {
     var digits: [24]u8 = undefined;
 
     var str_len: usize = 0;
@@ -477,7 +482,7 @@ pub fn zfpconv_dtoa(d: f64, dest: []u8) -> usize {
     const dbits = get_dbits(d);
 
     if ((dbits & signmask) == signmask) {
-        dest[0] = '-';
+        (*dest)[0] = (u8)('-');
         str_len += 1;
         neg = true;
     }
@@ -489,7 +494,7 @@ pub fn zfpconv_dtoa(d: f64, dest: []u8) -> usize {
     }
 
     var K:i32 = 0;
-    const ndigits = zgrisu2(d, digits, dbits, &K);
+    const ndigits = zgrisu2(d, &digits, dbits, &K);
 
     // ???We probably get a copy when using the slize dest[str_len...], not what we want
     // nah, probably wrong about that
