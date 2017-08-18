@@ -1,4 +1,4 @@
-// -*- mode:zig; -*-
+// -*- mode:zig; indent-tabs-mode:nil; -*-
 
 const U8_MAX = @maxValue(u8);
 const BITAP_TYPE = usize;
@@ -7,8 +7,8 @@ const BITAP_BIT_COUNT = BITAP_TYPE.bit_count - 1;
 error PatternTooLong;
 error EmptyInput;
 
-pub fn bitap_search(text: []u8, pattern: []u8) -> %isize {
-    if ((pattern.len == 0) || pattern[0] == 0) return -1; //error.EmptyInput;
+pub fn bitap_search(text: [] const u8, pattern: []const u8) -> %isize {
+    if ((pattern.len == 0) or pattern[0] == 0) return -1; //error.EmptyInput;
     if (pattern.len > BITAP_BIT_COUNT) return error.PatternTooLong;
 
     const m = pattern.len;
@@ -17,14 +17,14 @@ pub fn bitap_search(text: []u8, pattern: []u8) -> %isize {
     var i: usize = 0;
 
     // Init pattern mask
-    i = 0; while (i < m; i += 1) {
+    i = 0; while (i < m) : (i += 1) {
         pattern_mask[pattern[i]] &= ~(1 << i);
     }
     // search
-    i = 0; while (text[i] != 0 && i < text.len; i += 1) {
+    i = 0; while ((text[i] != 0) and (i < text.len)) : (i += 1) {
         R |= pattern_mask[text[i]];
-        R <<%= 1;
-
+        // R <<%= 1;
+        _ = @shlWithOverflow(@typeOf(R), R, 1, &R);
         if (0 == (R & (1 << m))) {
             // found
             return isize(i - m) + 1;

@@ -7,13 +7,13 @@ PROGS := $(BASEPREFIX)_dbg $(BASEPREFIX)_rel
 
 all: $(PROGS)
 
-DEPS = bitap.zig levenshtein.zig quicksearch.zig Makefile
+DEPS = bitap.zig levenshtein.zig quicksearch.zig Makefile $(ZIG)
 
 $(BASEPREFIX)_dbg: $(BASEPREFIX).zig $(DEPS)
-	$(ZIG) build --static --export exe --name $(@) $(<)
+	$(ZIG) build_exe --static --name $(@) $(<)
 
 $(BASEPREFIX)_rel: $(BASEPREFIX).zig $(DEPS)
-	$(ZIG) build --release --static --export exe --name $(@) $(<)
+	$(ZIG) build_exe --release-fast --static --name $(@) $(<)
 
 .PHONY:
 test: $(PROGS)

@@ -8,9 +8,8 @@ const qs = @import("quicksearch.zig");
 const levenshtein = @import("levenshtein.zig");
 const wagnerfisher = levenshtein.wagnerfisher;
 
-fn test_levenshtein(a: []u8, b: []u8) -> %void {
-    var wfl: usize = 0;
-    wfl = wagnerfisher(a, b);
+fn test_levenshtein(a: []const u8, b: []const u8) -> %void {
+    const wfl = wagnerfisher(a, b);
     %%io.stdout.printf("'{}' <-> '{}' is {}\n", a, b, wfl);
 }
 
@@ -44,7 +43,7 @@ fn test_all_levenshteins() {
     %%test_levenshtein("", "");
 }
 
-fn test_bitap_quicksearch(text: []u8, pattern: []u8) {
+fn test_bitap_quicksearch(text: []const u8, pattern: []const u8) {
     var bix: isize = 0;
     var qix: isize = 0;
     // handle error?
@@ -80,7 +79,7 @@ fn test_all_bitaps() {
     test_bitap_quicksearch(text, "");
 }
 
-pub fn main(args: [][]u8) -> %void {
+pub fn main() -> %void {
     test_all_levenshteins();
     test_all_bitaps();
 }
