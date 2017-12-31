@@ -1,6 +1,8 @@
-// -*- indent-tabs-mode:nil; -*-
+// -*- indent-tabs-mode: nil; -*-
 const assert = @import("std").debug.assert;
-const print = @import("std").io.stdout.printf;
+const io = @import("std").io;
+
+const print = @import("util.zig").print;
 
 // === blake2b ===
 // See: https://bitbucket.org/mihailp/blake2
@@ -13,19 +15,19 @@ const Blake2bIV = []u64 { 0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
                           0x1f83d9abfb41bd6b, 0x5be0cd19137e2179 };
 
 comptime { assert(Sigma.len == 12); }
-const Sigma = [][16]usize {
-    []usize {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
-    []usize { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 },
-    []usize { 11,  8, 12,  0,  5,  2, 15, 13, 10, 14,  3,  6,  7,  1,  9,  4 },
-    []usize {  7,  9,  3,  1, 13, 12, 11, 14,  2,  6,  5, 10,  4,  0, 15,  8 },
-    []usize {  9,  0,  5,  7,  2,  4, 10, 15, 14,  1, 11, 12,  6,  8,  3, 13 },
-    []usize {  2, 12,  6, 10,  0, 11,  8,  3,  4, 13,  7,  5, 15, 14,  1,  9 },
-    []usize { 12,  5,  1, 15, 14, 13,  4, 10,  0,  7,  6,  3,  9,  2,  8, 11 },
-    []usize { 13, 11,  7, 14, 12,  1,  3,  9,  5,  0, 15,  4,  8,  6,  2, 10 },
-    []usize {  6, 15, 14,  9, 11,  3,  0,  8, 12,  2, 13,  7,  1,  4, 10,  5 },
-    []usize { 10,  2,  8,  4,  7,  6,  1,  5, 15, 11,  9, 14,  3, 12, 13,  0 },
-    []usize {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
-    []usize { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 }
+const Sigma = [][16]u8 {
+    []u8 {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
+    []u8 { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 },
+    []u8 { 11,  8, 12,  0,  5,  2, 15, 13, 10, 14,  3,  6,  7,  1,  9,  4 },
+    []u8 {  7,  9,  3,  1, 13, 12, 11, 14,  2,  6,  5, 10,  4,  0, 15,  8 },
+    []u8 {  9,  0,  5,  7,  2,  4, 10, 15, 14,  1, 11, 12,  6,  8,  3, 13 },
+    []u8 {  2, 12,  6, 10,  0, 11,  8,  3,  4, 13,  7,  5, 15, 14,  1,  9 },
+    []u8 { 12,  5,  1, 15, 14, 13,  4, 10,  0,  7,  6,  3,  9,  2,  8, 11 },
+    []u8 { 13, 11,  7, 14, 12,  1,  3,  9,  5,  0, 15,  4,  8,  6,  2, 10 },
+    []u8 {  6, 15, 14,  9, 11,  3,  0,  8, 12,  2, 13,  7,  1,  4, 10,  5 },
+    []u8 { 10,  2,  8,  4,  7,  6,  1,  5, 15, 11,  9, 14,  3, 12, 13,  0 },
+    []u8 {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
+    []u8 { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 }
 };
 
 /// increment 2 u64
@@ -36,7 +38,7 @@ inline fn inc64x2(a: &[2]u64, b: u64) {
     }
 }
 
-/// padd buffer with zeroes
+/// pad buffer with zeroes
 inline fn padding(a: &[128]u8, b: usize) {
     for ((*a)[b..(*a).len]) |*d| {
         *d = 0;
@@ -45,10 +47,10 @@ inline fn padding(a: &[128]u8, b: usize) {
 
 /// rotate right unsigned 64 bit
 inline fn ror64(x: u64, n: usize) -> u64 {
-    (x >> u6(n)) | (x << u6(64 - n))
+    return (x >> u6(n)) | (x << u6(64 - n));
 }
 
-inline fn G (v: &[16]u64, a: usize, b: usize, c: usize, d: usize, x: u64 , y: u64)  {
+inline fn G (v: &[16]u64, a: u8, b: u8, c: u8, d: u8, x: u64 , y: u64)  {
     (*v)[a] = (*v)[a] +% (*v)[b] +% x;
     (*v)[d] = ror64((*v)[d] ^ (*v)[a], 32);
     (*v)[c] = (*v)[c] +% (*v)[d];
@@ -70,16 +72,16 @@ pub const Blake2b = struct {
 
     // convenience
     pub fn print(b: &Self) {
-        %%print("Blake2b: hash_size={}, key_size={}\n", b.hash_size, b.key_size);
-        %%print("offset: {} {}\nhash\n", b.offset[0], b.offset[1]);
+        print("Blake2b: hash_size={}, key_size={}\n", b.hash_size, b.key_size);
+        print("offset: {} {}\nhash\n", b.offset[0], b.offset[1]);
         for (b.hash) |value, i| {
-            %%print("[{}] = {x16}\n", i, value);
+            print("[{}] = {x16}\n", i, value);
         }
-        %%print("buffer\n");
+        print("buffer\n");
         for (b.buffer) |value| {
-            %%print("{x2}", value);
+            print("{x2}", value);
         }
-        %%print("\n");
+        print("\n");
     }
 
     pub fn init(hash_size: usize, key: []u8) -> Self {
@@ -97,11 +99,11 @@ pub const Blake2b = struct {
             padding(&b.buffer, b.buffer_idx);
             b.buffer_idx = 128;
         }
-        b
+        return b;
     }
 
     pub fn update(b: &Self, data: &[]const u8) {
-        // %%print("data.len={}\n", (*data).len);
+        // print("data.len={}\n", (*data).len);
         var i = usize(0);
         while (i < (*data).len) {
             if (b.buffer_idx == 128) {
@@ -109,7 +111,7 @@ pub const Blake2b = struct {
                 b.compress(false);
             }
             b.buffer[b.buffer_idx] = (*data)[i];
-            // %%print("idx={}, b={x2}\n", b.buffer_idx, *d);
+            // print("idx={}, b={x2}\n", b.buffer_idx, *d);
             b.buffer_idx += 1;
             i += 1;
         }
@@ -132,8 +134,28 @@ pub const Blake2b = struct {
         var input = []u64 {0} ** 16;
         var v = []u64 {0} ** 16;
         var i: usize = 0;
+        //const b64 = @ptrCast(&u64, &b.buffer[0]);
+        // hmm, this must be endian aware?!?
+        //while (i < 16) {
+        //    input[i] = *(b64[i]);
+        //    i += 1;
+        //}
         while (i < 16) {
-            input[i] = *(@ptrCast(&u64, &b.buffer[i * 8]));
+            const byteidx = i * @sizeOf(u64);
+            //var tmp  = u64(b.buffer[byteidx + 0]) << (0 * 8);
+            //tmp |= u64(b.buffer[byteidx + 1]) << (1 * 8);
+            //tmp |= u64(b.buffer[byteidx + 2]) << (2 * 8);
+            //tmp |= u64(b.buffer[byteidx + 3]) << (3 * 8);
+            //tmp |= u64(b.buffer[byteidx + 4]) << (4 * 8);
+            //tmp |= u64(b.buffer[byteidx + 5]) << (5 * 8);
+            //tmp |= u64(b.buffer[byteidx + 6]) << (6 * 8);
+            //tmp |= u64(b.buffer[byteidx + 7]) << (7 * 8);
+            var tmp: u64 = 0;
+            var z: u6 = 0;
+            while (z < @sizeOf(u64)) : (z += 1) {
+                tmp |= u64(b.buffer[byteidx + z]) << (z * @sizeOf(u64));
+            }
+            input[i] = tmp;
             i += 1;
         }
         i = 0;
@@ -176,23 +198,23 @@ pub const Blake2b = struct {
         while (i < b.hash_size) {
             const uv = @ptrCast(&u64, &b.hash[i / 8]);
             (*result)[i] = u8((*uv >> (8 * u6(i & 7)) & 0xFF));
-            // %%print("final *uv={x} bv={x}\n", *uv, bv);
+            // print("final *uv={x} bv={x}\n", *uv, bv);
             i += 1;
         }
         // maybe if/when we get it to work...zero out some member variables
-        // @memset(b, @sizeof(b));
-        b.hash_size
+        // @memset(b, @sizeOf(b));
+        return b.hash_size;
     }
 };
 
 test "inc64x2" {
     var a = []u64 {0, 0};
     inc64x2(&a, 4);
-    %%print("{},{}\n", a[0], a[1]);
+    print("{},{}\n", a[0], a[1]);
     assert(a[0] == 4 and a[1] == 0);
     a[0] = @maxValue(u64);
     inc64x2(&a, 4);
-    %%print("{},{}\n", a[0], a[1]);
+    print("{},{}\n", a[0], a[1]);
     assert(a[0] == 3 and a[1] == 1);
 }
 
@@ -205,12 +227,12 @@ test "ror64" {
     const a = u64(0b0010000000000000000000000000000000000000000000000000000000000000);
     assert(y == a);
     assert(x == z);
-    // %%print("\nx={x016}\ny={x016}\nz={x016}\na={x016}\n", x, y, z, a);
+    // print("\nx={x016}\ny={x016}\nz={x016}\na={x016}\n", x, y, z, a);
 }
 
 test "Sigma"
 {
-    %%print("Sigma.len = {}\n", Sigma.len);
+    print("Sigma.len = {}\n", Sigma.len);
     assert(Sigma.len == 12);
     assert(Sigma[0].len == 16);
     assert(Sigma[0].len == Sigma[11].len);
@@ -220,11 +242,11 @@ test "Sigma"
         ix += 1;
     }
     for (Sigma) |value, i| {
-        %%print("Sigma[{d2}].len = {} |", i, value.len);
+        print("Sigma[{d2}].len = {} |", i, value.len);
         for (value) |vvalue| {
-            %%print(" {}", vvalue);
+            print(" {}", vvalue);
         }
-        %%print("\n");
+        print("\n");
     }
 }
 
@@ -232,7 +254,7 @@ test "Blake2bIV"
 {
     assert(Blake2bIV.len == 8);
     for (Blake2bIV) |value, i| {
-        %%print("[{d}] = {x}\n", i, value);
+        print("[{d}] = {x}\n", i, value);
     }
 }
 
@@ -240,7 +262,7 @@ test "Blake2b"
 {
     //assert(getBlake2b("abc", 4, "abc") == "b8f97209")
     for (Blake2bIV) |value, ii| {
-        %%print("Blake2bIV 1 [{d}] = {x}\n", ii, value);
+        print("Blake2bIV 1 [{d}] = {x}\n", ii, value);
     }
     var data = "abc";
     var output: [64]u8 = undefined;
@@ -249,18 +271,37 @@ test "Blake2b"
     b.print();
     const l = b.final(&output[0..]);
     assert(l == 4);
-    %%print("output.len={}, l={}\n", output.len, l);
+    print("output.len={}, l={}\n", output.len, l);
     assert(output[0] == 0xb8);
     assert(output[1] == 0xf9);
     assert(output[2] == 0x72);
     assert(output[3] == 0x09);
     {var i = usize(0);
         while (i < l) {
-            %%print("[{d}] = 0x{x2}\n", i, output[i]);
+            print("[{d}] = 0x{x2}\n", i, output[i]);
             i += 1;
         }
     }
     b.print();
+}
+
+
+// this sometimes segfault with --release-fast, ~50%
+pub fn hexlify(dest: &[]u8, src: []u8, srclen: usize) -> usize {
+    assert((*dest).len >= ((srclen * 2) + 1));
+    var destlen = usize(0);
+    var i = usize(0);
+    while (i < srclen) {
+        const u = (src[i] & 0xf0) >> 4;
+        const l = src[i] & 0x0f;
+        (*dest)[destlen    ] = if (u > 9) (u - 10) + 'a' else u + '0';
+        (*dest)[destlen + 1] = if (l > 9) (l - 10) + 'a' else l + '0';
+        i += 1;
+        destlen += 2;
+    }
+    (*dest)[destlen] = 0;
+
+    return destlen;
 }
 
 pub fn main() -> %void {
@@ -268,19 +309,16 @@ pub fn main() -> %void {
     var output: [64]u8 = undefined;
     var b = Blake2b.init(4, data[0..]);
     b.update(&data[0..]);
-    b.print();
     const l = b.final(&output[0..]);
     assert(l == 4);
-    %%print("output.len={}, l={}\n", output.len, l);
+    print("output.len={}, l={}\n", output.len, l);
     assert(output[0] == 0xb8);
     assert(output[1] == 0xf9);
     assert(output[2] == 0x72);
     assert(output[3] == 0x09);
-    {var i = usize(0);
-        while (i < l) {
-            %%print("[{d}] = 0x{x2}\n", i, output[i]);
-            i += 1;
-        }
-    }
     b.print();
+    var stroutput = []u8{0} ** (64 * 2 + 1);
+    const ll = hexlify(&stroutput[0..], output[0..], l);
+    //print("hash is {x}\n", output[0..l]);
+    print("hash is {}\n", stroutput[0..l*2]);
 }
