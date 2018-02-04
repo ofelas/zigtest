@@ -1,71 +1,78 @@
+// -*- mode:zig; indent-tabs-mode:nil; comment-start:"// "; -*-
 const std = @import("std");
+const os = std.os;
+var allocator = std.debug.global_allocator;
+const warn = @import("std").debug.warn;
 const io = std.io; // stdio lol
+const mem = std.mem;
 const debug = std.debug;
 const assert = debug.assert;
-const math = @import("std").math;
+const math = std.math;
 const max = math.max;
-const hashmap = @import("std").hash_map;
-const list = @import("std").list;
-const printer = @import("printer.zig");
+const hashmap = std.hash_map;
+const list = @import("jlist.zig");
+//const printer = @import("printer.zig");
+const parseUnsigned = std.fmt.parseUnsigned;
+const parseInt = std.fmt.parseInt;
 
 const fpconv_dtoa = @import("../fpconv/zfpconv.zig").zfpconv_dtoa;
 const atod = @import("../fpconv/zfast_atof.zig").zatod;
 
-// might come in handy, should things fail, 8)
-// #static_eval_enable(false)
+/// There may be a simpler way...
+var stdout_file: io.File = undefined;
+var stdout_file_out_stream: io.FileOutStream = undefined;
+var stdout_stream: ?&io.OutStream = null;
 
-fn printStrNumNum(str: []const u8, pos: usize, level: isize) -> %void {
-    %%io.stdout.write(str);
-    %%io.stdout.write(":");
-    %%io.stdout.printInt(usize, pos);
-    %%io.stdout.write(":");
-    %%io.stdout.printInt(isize, level);
-    %%io.stdout.printf("\n");
+pub fn print(comptime fmt: []const u8, args: ...) void {
+    const stream = getStdOutStream() catch |_| return;
+    stream.print(fmt, args) catch |_| return;
 }
 
-pub error JsonError;
-
-enum JsonType {
-    JSONNull: void,
-    JSONInteger: isize,
-    JSONDouble: f64,
-    JSONBool: bool,
-    JSONString: []u8, // how is this memory handled?
-    JSONArray, // list of things, ?&[]JsonNode depends on itself, maybe a GenNode as in the test?
-    JSONObject, // key, value (the key is a string, we do them as JSONString right now)
-
-    fn print(jt: &JsonType, stream: io.OutStream) -> %void {
-        {}
+inline fn getStdOutStream() %&io.OutStream {
+    if (stdout_stream) |st| {
+        return st;
+    } else {
+        stdout_file = try io.getStdOut();
+        stdout_file_out_stream = io.FileOutStream.init(&stdout_file);
+        const st = &stdout_file_out_stream.stream;
+        stdout_stream = st;
+        return st;
     }
 }
 
-fn djbdHasher(v: []u8) -> u32 {
+fn printDouble(d: f64, stream: io.OutStream) %void {
+    var buf: [24]u8 = zeroes;
+    var sz = fpconv_dtoa(d, buf);
+    %%stream.write(buf[0 .. sz]);
+}
+
+fn printStrNumNum(str: []const u8, pos: usize, level: isize) void {
+    print("{}: {}: {}\n", str, pos, level);
+}
+
+error JsonError;
+
+const JasonHM = hashmap.HashMap([]u8, JsonValue, djbdHasher, jsonDataCmp);
+const JasonRefHM = hashmap.HashMap([]u8, &JsonValue, djbdHasher, jsonDataCmp);
+
+const JasonValueList = list.List(JsonValue);
+const JasonValueRefList = list.List(&JsonValue);
+const JsonStateStack = list.List(JsonParsingState);
+
+fn djbdHasher(v: []u8) u32 {
     var hash: u32 = 5831;
-    var buf: [64]u8 = undefined;
 
     for (v) |c, i| {
         if (c == 0) break;
-        hash <<%= 5;
+        hash <<= 5;
         hash +%= hash;
         hash +%= u32(c);
     }
-    // stumbling in the dark, debugging to see if we get called...
-    // %%io.stdout.write("Hashed:");
-    // %%io.stdout.write(v);
-    // %%io.stdout.write(" to ");
-    // %%io.stdout.printInt(u32, hash);
-    // %%io.stdout.write(", ");
-    // const sz = printer.hexPrintInt(u32, buf, hash);
-    // for (buf) |x, i| {
-    //    if (i+1 == sz) break;
-    //    %%io.stdout.writeByte(x);
-    // }
-    // %%io.stdout.printf("\n");
 
-    hash
+    return hash;
 }
 
-fn jsonDataCmp(a: []u8, b: []u8) -> bool {
+fn jsonDataCmp(a: []u8, b: []u8) bool {
     var result: bool = false;
 
     if (a.len == b.len) {
@@ -78,119 +85,521 @@ fn jsonDataCmp(a: []u8, b: []u8) -> bool {
         }
     }
 
-    result
+    return result;
 }
 
-const JasonHM = hashmap.HashMap([]u8, JsonType, djbdHasher, jsonDataCmp);
-const JasonList = list.List(JsonNode);
-
-enum JsonOA {
-    JSONArray: []JsonType, // List of something? list.List(JsonNode)
-    JSONObject: JasonHM, // HashMap
-}
-
-fn printDouble(d: f64, stream: io.OutStream) -> %void {
-    var buf: [24]u8 = zeroes;
-    var sz = fpconv_dtoa(d, buf);
-    %%stream.write(buf[0...sz]);
-    //%%stream.printf("\n");
-}
-
-pub struct JsonNode {
-    kind: JsonType,
-    jobject: ?JsonOA, // nah, this looks weird...
-
-    pub fn print(jd: &const JsonNode, stream: io.OutStream) -> %void {
-        %%stream.write("<JsonNode>::");
-        // error: invalid cast from type 'JsonType' to 'isize'
-        // %%stream.printInt(isize, isize(jd.kind));
-        switch (jd.kind) {
-        JSONNull => { %%stream.write("null"); },
-        JSONInteger => |x| {
-            %%stream.write("integer=");
-            %%stream.printInt(isize, x);
-        },
-        JSONDouble => |x| {
-           %%stream.write("double=");
-           %%printDouble(x, stream);
-        },
-        JSONBool => |x| {
-           %%stream.write("bool=");
-           %%stream.write(if (x) "true" else "false");
-        },
-        JSONString => |x| {
-           %%stream.write("string=");
-           %%stream.write(x);
-        },
-        JSONObject => |x| {
-           %%stream.write("object=");
-           if (const o ?= jd.jobject) {
-               // o should now be the unwrapped thingy
-               switch (o) {
-               JSONObject =>  |y| {
-                   %%stream.write("JSON Object entries:");
-                   %%stream.printInt(usize, y.entries.len);
-                   var iter = y.entryIterator();
-                   while (true) {
-                       const e = iter.next() ?? break;
-                       %%stream.write((e).key);
-                       %%stream.printf("->");
-                       switch((e).value) {
-                       JSONString => |s| {
-                           %%stream.write(s);
-                           %%stream.printf("\n");
-                       },
-                       else => {},
-                       }
-                   }
-               },
-               else => @unreachable(),
-               }
-           }
-        },
-        else => { %%stream.write("no more info (yet)"); } ,
-        }
-        // newline and flush
-        %%stream.printf("\n");
-    }
-}
-
-pub struct JStats {
+pub const JStats = struct {
     objects: usize,
     arrays: usize,
     deepest: usize,
 
-    pub fn print(js: &const JStats, stream: io.OutStream) -> %void {
-        %%stream.write("<JStats>objects=");
-        %%stream.printInt(usize, js.objects);
-        %%stream.write(",arrays=");
-        %%stream.printInt(usize, js.arrays);
-        %%stream.write(",deepest=");
-        %%stream.printInt(usize, js.deepest);
-        %%stream.printf(".\n");
+    pub fn print(js: &const JStats, stream: ?&io.OutStream) %void {
+        if (stream) |s| {
+            try s.print("<JStats>objects={}, arrays={}, deepest={}\n",
+                        js.objects, js.arrays, js.deepest);
+        }
     }
+
+    pub fn addObject(js: &JStats, level: isize) void {
+        js.objects += 1;
+        js.deepest = max(js.deepest, usize(level));
+    }
+
+    pub fn addArray(js: &JStats, level: isize) void {
+        js.arrays += 1;
+        js.deepest = max(js.deepest, usize(level));
+    }
+};
+
+
+
+const JsonValue = union(enum) {
+    JSONNull: void,
+    JSONInteger: isize,
+    JSONDouble: f64,
+    JSONBool: bool,
+    JSONString: []u8, // a slice probably fixed size
+    // these have variable size, it might not  be such a good idea
+    JSONArray: usize, // number of children
+    JSONObject: usize, // number of children
+
+    fn print(jt: &JsonValue, stream: ?&io.OutStream) %void {
+        if (stream) |s| {
+            switch (*jt) {
+                JsonValue.JSONNull    => |v| { try s.print("null"); },
+                JsonValue.JSONBool    => |v| { try s.print("{}", if (v) "true" else "false"); },
+                JsonValue.JSONString  => |v| { try s.print("{}", v); },
+                JsonValue.JSONInteger => |v| { try s.print("{}", v); },
+                JsonValue.JSONDouble  => |v| { try s.print("{}", v); },
+                JsonValue.JSONArray   => |v| {
+                    try s.print("array: {}", v);
+                },
+                JsonValue.JSONObject  => |v| {
+                    try s.print("object: {}", v);
+                },
+            else => {},
+            }
+            try s.print("\n");
+            }
+    }
+};
+
+const JsonNode = struct {
+    kind: JsonValue,
+    level: usize,
+    parent: usize, // index of parent in list of values
+
+};
+
+const JsonNodeList = list.List(JsonNode);
+const JsonParentList = list.List(usize);
+
+const JsonContainer = struct {
+    vlist: JsonNodeList,
+    parents: JsonParentList,
+    level: isize,
+
+    fn add(jc: &JsonContainer, jv: &JsonValue) %void {
+        switch (*jv) {
+            JsonValue.JSONArray => { jc.level += 1; },
+            JsonValue.JSONObject => { jc.level += 1; },
+            else => {},
+        }
+        const p = jc.parents.last() catch |_| 0;
+        const what = JsonNode {.kind = *jv, .level = usize(jc.level), .parent = p};
+        const where = try jc.vlist.push(&what);
+        if (jc.parents.len > 0) {
+            switch (jc.vlist.items[p].kind) {
+            JsonValue.JSONArray => |a| {}, // njet workie, a += 1;
+            JsonValue.JSONObject => {},
+            else => {},
+            }
+        }
+        switch (*jv) {
+            JsonValue.JSONArray => { _ = try jc.parents.push(&where); },
+            JsonValue.JSONObject => { _ = try jc.parents.push(&where); },
+            else => {},
+        }
+        return;
+    }
+
+    fn addKV(jc: &JsonContainer, k: []u8, jv: &JsonValue) %void {
+        // what do we do with the key?
+        switch (*jv) {
+            JsonValue.JSONArray => { jc.level += 1; },
+            JsonValue.JSONObject => { jc.level += 1; },
+            else => {},
+        }
+        const p = if (jc.parents.len > 0) try jc.parents.last() else 0;
+        const where = try jc.vlist.push(JsonNode {.kind = *jv, .level = usize(jc.level), .parent = p});
+        switch (*jv) {
+            JsonValue.JSONArray => { _ = try jc.parents.push(&where); },
+            JsonValue.JSONObject => { _ = try jc.parents.push(&where); },
+            else => {},
+        }
+    }
+
+    fn up(jc: &JsonContainer) void {
+        jc.level -= 1;
+    }
+
+    fn print(jc: &JsonContainer, stream: ?&io.OutStream) %void {
+        if (stream) |s| {
+        {
+            var it = usize(0);
+            try s.print("parents\n");
+            while (it < jc.parents.len) : (it += 1) {
+                try s.print("p={} -> {}\n", it, jc.parents.items[it]);
+            }
+        }
+        {
+            var it = usize(0);
+            try s.print("values\n");
+            while (it < jc.vlist.len) : (it += 1) {
+                try s.print("{}:l={}:p={} -> ", it, jc.vlist.items[it].level, jc.vlist.items[it].parent);
+                try jc.vlist.items[it].kind.print(stream);
+            }
+        }
+        }
+    }
+};
+
+// fn funcname (arguments) returntype {}
+fn mkJsonContainer() JsonContainer {
+    return JsonContainer { .vlist = JsonNodeList.init(allocator),
+            .parents = JsonParentList.init(allocator),
+            .level = 0 };
 }
 
-enum JsonParsingState {
-   NONE,
-   OBJECT,
-   OBJECT_COLON,
-   OBJECT_VALUE,
-   OBJECT_COMMA,
-   ARRAY,
+const JsonParsingState = enum(u16) {
+    NONE,                       // 0
+    OBJECT,                     // 1
+    OBJECT_KEY,                 // 2
+    OBJECT_COLON,               // 3
+    OBJECT_VALUE,               // 4
+    OBJECT_COMMA,               // 5
+    ARRAY,                      // 6
+
+    fn print(jps: &JsonParsingState, stream: ?&io.OutStream) %void {
+        if (stream) {
+            try st.print("JsonParsingState.{}", @memberName(JsonParsingState, jps));
+        }
+    }
+};
+
+//can_access_at_index(buffer, index) ((buffer != NULL) && (((buffer)->offset + index) < (buffer)->length))
+
+const ZJSON_NESTING_LIMIT: usize = 64;
+
+const ParseBuffer = struct {
+    const Self = this;
+    content: []const u8,
+    // We actually have the length in content.len, 8)
+    length: usize,
+    offset: usize,
+    depth: usize, // Recursion level, we impose an arbitrary limit
+    // Maybe an allocator?
+
+    fn debug(pb: &Self) void {
+        print("ParseBuffer: length={}/{}, offset={} depth={}\n",
+              pb.length, pb.content.len, pb.offset, pb.depth);
+    }
+
+    inline fn canAccessAtIndex(pb: &Self, index: usize) bool {
+        return (pb.offset + index) < pb.content.len;
+    }
+
+    inline fn charAtOffset(pb: &Self) u8 {
+        var result: u8 = 0;
+        if (pb.canAccessAtIndex(0) == true) {
+            result = pb.content[pb.offset];
+        }
+
+        return result;
+    }
+
+    inline fn skipUtf8Bom(pb: &Self) bool {
+        var result = false;
+        if (pb.offset == 0) {
+            if (pb.canAccessAtIndex(4) == true) {
+                //"\xEF\xBB\xBF"
+                if ((pb.content[pb.offset] == 0xef)
+                    and (pb.content[pb.offset + 1] == 0xbb)
+                    and (pb.content[pb.offset + 2] == 0xbf)) {
+                    pb.offset += 3;
+                    result = true;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    inline fn skipWhitespace(pb: &Self) void {
+        while (pb.canAccessAtIndex(0) and (pb.charAtOffset() <= 32)) {
+            pb.offset += 1;
+        }
+        // Go back if we went to far...(no comment)
+        if (pb.offset == pb.length) {
+            pb.offset -= 1;
+        }
+    }
+};
+
+/// Parse a string, we must be looking at the initial '"' (double quote)
+fn parseString(pb: &ParseBuffer) bool {
+    var result = false;
+    if (pb.charAtOffset() == '"') {
+        pb.offset += 1;
+        const startsAt = pb.offset;
+        // Now find the ending '"', ignoring utf8
+        var previous = pb.charAtOffset();
+        while (pb.canAccessAtIndex(0)) {
+            if (pb.charAtOffset() == '"' and previous != '\\') {
+                result = true;
+                print("STRING: '{}'\n", pb.content[startsAt .. pb.offset]);
+                pb.offset += 1;
+                break;
+            }
+            previous = pb.charAtOffset();
+            pb.offset += 1;
+        }
+    } else {
+        print("ERROR: Not looking at a STRING @ ");
+        pb.debug();
+    }
+
+    return result;
+}
+
+const NumericValue = struct {
+    i: i64,
+    f: f64,
+};
+
+const NumericResult = union(enum) {
+ NotOk: void,
+ Ok: NumericValue,
+};
+
+fn parseNumeric(pb: &ParseBuffer) NumericResult {
+    var result = NumericResult {.NotOk = {}};
+    var must_be_int = true;
+    var dots: u16 = 0;
+    var exps: u16 = 0;
+    var digits: u16 = 0;
+    const startsAt = pb.offset;
+
+    while (pb.canAccessAtIndex(0) and digits < 254) {
+        switch (pb.charAtOffset()) {
+            // zig TODO: '0' ... '9'
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
+                pb.offset += 1;
+                digits += 1;
+            },
+            '.'  => {
+                pb.offset += 1;
+                must_be_int = false;
+                dots += 1;
+            },
+            'e', 'E' => {
+                pb.offset += 1;
+                must_be_int = false;
+            },
+            '+', '-' => {
+                pb.offset += 1;
+            },
+            else => {
+                if ((digits > 0) and (dots <= 1) and (startsAt < pb.offset)) {
+                    print("NUMBER: '{}' {} {}\n", pb.content[startsAt .. pb.offset], digits, dots);
+                    if (must_be_int == true) {
+                        if (parseInt(i64, pb.content[startsAt .. pb.offset], 10)) |v| {
+                           result = NumericResult { .Ok = NumericValue { .i = v, .f = f64(v)} };
+                        } else |err| {
+                        }
+                    } else {
+                        // parse the float
+                        if (atod(pb.content[startsAt .. pb.offset])) |v| {
+                            result = NumericResult { .Ok = NumericValue { .i = i64(v), .f = v} };
+                        } else |err| {
+                            print("ERROR: {}\n", err);
+                        }
+                    }
+                } else {
+                    print("BAD NUMBER: '{}' {} {}\n", pb.content[startsAt .. pb.offset], digits, dots);
+                    pb.debug();
+                }
+                break;
+            },
+        }
+    }
+
+    return result;
+}
+
+fn parseArray(pb: &ParseBuffer) bool {
+    var result = false;
+    if (pb.depth >= ZJSON_NESTING_LIMIT) {
+        print("ERROR: Nested too deep @ ");
+        pb.debug();
+        return result;
+    }
+    pb.depth += 1;
+    if (pb.charAtOffset() == '[') {
+        // Move past the '['
+        pb.offset += 1;
+        pb.skipWhitespace();
+        if (pb.canAccessAtIndex(0)) {
+            if (pb.charAtOffset() == ']') {
+                // Empty ARRAY, move past the ']'...
+                pb.offset += 1;
+                pb.depth -= 1;
+                result = true;
+            } else {
+                // Should be a comma separated list of "items"
+                var keepgoing = true;
+                var i: usize = 0;
+                while (keepgoing) {
+                    pb.skipWhitespace();
+                    result = parseValue(pb);
+                    pb.skipWhitespace();
+                    if (pb.canAccessAtIndex(0) and pb.charAtOffset() == ',') {
+                        pb.offset += 1;
+                        i += 1;
+                    } else {
+                        keepgoing = false;
+                        break;
+                    }
+                }
+                if (pb.canAccessAtIndex(0) and pb.charAtOffset() == ']') {
+                    pb.offset += 1;
+                    pb.depth -= 1;
+                    print("ARRAY of {} items at depth {}\n", i, pb.depth);
+                    result = true;
+                } else {
+                    print("ERROR: ARRAY @ "); pb.debug();
+                    result = false;
+                }
+            }
+        }
+    } else {
+        print("ERROR: Not looking at an ARRAY {} @ ", pb.charAtOffset());
+        pb.debug();
+    }
+
+    return result;
+}
+
+fn parseObject(pb: &ParseBuffer) bool {
+    var result = false;
+    if (pb.depth >= ZJSON_NESTING_LIMIT) {
+        print("ERROR: Nested too deep @ ");
+        pb.debug();
+        return result;
+    }
+    pb.depth += 1;
+    if (pb.charAtOffset() == '{') {
+        // Move past the '{'
+        pb.offset += 1;
+        pb.skipWhitespace();
+        pb.debug();
+        if (pb.canAccessAtIndex(0)) {
+            if (pb.charAtOffset() == '}') {
+                // Empty OBJECT, move past the '}'...
+                pb.offset += 1;
+                pb.depth -= 1;
+                result = true;
+            } else {
+                // Should be a comma separated list of "items" (key: value)
+                var keepgoing = true;
+                while (keepgoing) {
+                    pb.skipWhitespace();
+                    result = parseString(pb);
+                    pb.skipWhitespace();
+                    if (pb.charAtOffset() == ':') {
+                        pb.offset += 1;
+                    } else {
+                        keepgoing = false;
+                        break;
+                    }
+                    pb.skipWhitespace();
+                    result = parseValue(pb);
+                    pb.skipWhitespace();
+                    if (pb.canAccessAtIndex(0) and pb.charAtOffset() == ',') {
+                        pb.offset += 1;
+                    } else {
+                        keepgoing = false;
+                        break;
+                    }
+                }
+                if (pb.canAccessAtIndex(0) and pb.charAtOffset() == '}') {
+                    pb.offset += 1;
+                    pb.depth -= 1;
+                    result = true;
+                } else {
+                    print("ERROR: OBJECT @ "); pb.debug();
+                    result = false;
+                }
+
+            }
+        }
+    } else {
+        print("ERROR: Not looking at an OBJECT {} @ ", pb.charAtOffset());
+        pb.debug();
+    }
+
+    return result;
+}
+
+fn parseValue(pb: &ParseBuffer) bool {
+    var result = false;
+    pb.skipWhitespace();
+    if (pb.canAccessAtIndex(0) == true) {
+        const ch = pb.charAtOffset();
+        switch (ch) {
+            '"' => { result = parseString(pb); },
+            '[' => { result = parseArray(pb); },
+            '{' => { result = parseObject(pb); },
+            'f' => {
+                if (pb.canAccessAtIndex(5) == true) {
+                    if (pb.content[pb.offset + 1] == 'a'
+                        and (pb.content[pb.offset + 2] == 'l')
+                        and (pb.content[pb.offset + 3] == 's')
+                        and (pb.content[pb.offset + 4] == 'e')) {
+                        pb.offset += 5;
+                        result = true;
+                    }
+                }
+            },
+            't' => {
+                if (pb.canAccessAtIndex(4) == true) {
+                    if (pb.content[pb.offset + 1] == 'r'
+                        and (pb.content[pb.offset + 2] == 'u')
+                        and (pb.content[pb.offset + 3] == 'e')) {
+                        pb.offset += 4;
+                        result = true;
+                    }
+                }
+            },
+            'n' => {
+                if (pb.canAccessAtIndex(4) == true) {
+                    if (pb.content[pb.offset + 1] == 'u'
+                        and (pb.content[pb.offset + 2] == 'l')
+                        and (pb.content[pb.offset + 3] == 'l')) {
+                        pb.offset += 4;
+                        result = true;
+                    }
+                }
+            },
+            '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' =>  { // numeric
+                var r: NumericResult = parseNumeric(pb);
+                switch (r) {
+                    NumericResult.Ok => |v|{
+                        result = true;
+                        // Don't use {.<n>} for float as it fails...
+                        // std/fmt/index.zig:151:43
+                        // Unable to dump stack trace: OutOfMemory
+                        print("r.i={}, r.f={}\n", v.i, v.f);
+                    },
+                    else => {},
+                }
+            },
+            else => {
+                print("UNHANDLED @"); pb.debug();
+                result = false;
+            },
+        }
+    } else {
+        print("DONE... @ ");
+        pb.debug();
+    }
+
+    return result;
 }
 
 // a not so validating JSON parser...
-fn parseJson(buf: []u8) -> %void {
+fn parseJson(buf: []u8) %void {
+    //var allocator = debug.global_allocator;
    var jstats = JStats { .objects = 0, .arrays = 0, .deepest = 0 };
    var pos = usize(0);
    var level = isize(0);
    var js = JsonParsingState.NONE;
-   var current_object: ?&JsonNode = null;
-   var x: usize = 0;
    var key: []u8 = undefined; // ???
-   var jl: JasonList = undefined;
-   jl.init(&debug.global_allocator);
+   var state_stack = JsonStateStack.init(allocator);
+   var jv: JsonValue = undefined; // value
+   var jsidx = try state_stack.push(js);
+   var storage = mkJsonContainer();
+
+   if (true) {
+   var pb = ParseBuffer {.content = buf, .length = buf.len, .offset = 0, .depth = 0};
+   pb.debug();
+   _ = pb.skipUtf8Bom();
+   pb.skipWhitespace();
+   pb.debug();
+   const result = parseValue(&pb);
+   print("result = {}\n", result);
+   pb.debug();
+   } else {
    while (pos < buf.len) {
        const cpos = pos;
        const ch = buf[cpos];
@@ -198,54 +607,80 @@ fn parseJson(buf: []u8) -> %void {
        switch (ch) {
        '\x00' => break,
        ' ', '\t', '\n', '\r' => continue, // one way to do it
-       ',' => {%%printStrNumNum("COMMA", cpos, level); continue; }, // another
-       ':' => %%printStrNumNum("COLON", cpos, level), // and a third
-       '[' => { 
-                  js = JsonParsingState.ARRAY;
-                  x = 0;
-                  level += 1;
-                  %%printStrNumNum("ARRAY Start", cpos, level);
-                  jstats.arrays += 1;
-                  jstats.deepest = max(jstats.deepest, usize(level));
-                  var jll: JasonList = undefined;
-                  jll.init(&debug.global_allocator);
-                  //var jd = JsonNode {.kind = JsonType.JSONArray, .jobject = JsonOA.JSONArray {jll} };
-                  //%%jl.append(jd);
-              },
+       ',' => continue, // another %%printStrNumNum("COMMA", cpos, level); 
+       ':' => {
+           if (js != JsonParsingState.OBJECT_COLON) {
+               print("COLON in WRONG parsing state\n");
+               // u16(js) so that print can handle it
+               print("STATE {} {}\n", cpos, u16(js));
+               {var it = usize(0);
+                   while (it < state_stack.len) : (it += 1) {
+                       print("{} -> {}\n", it, u16(state_stack.items[it]));
+                   }
+               }
+           }
+           js = JsonParsingState.OBJECT_VALUE;
+       },
+       '/' => {
+           // it could be a comment that we will ignore...
+           if (buf[pos] == '/') {
+               var epos = pos;
+               while (epos < buf.len) : (epos += 1) {
+                   if (buf[epos] == '\n') {
+                       print("{}\n", buf[pos-1 .. epos]);
+                       pos = epos;
+                       break;
+                   }
+               }
+           } else {
+               return error.JsonError;
+           }
+       },
+       '[' => {
+           jsidx = try state_stack.push(JsonParsingState.ARRAY);
+           print("ARRAY Start {} {}\n", cpos, level);
+           jstats.addArray(level);
+           // does not work anymore
+           // jll.init(&debug.global_allocator);
+           jv = JsonValue { .JSONArray = 0 };
+           try storage.add(&jv);
+
+           level += 1;
+           if (js == JsonParsingState.OBJECT_VALUE) {
+               js = JsonParsingState.OBJECT_KEY;
+           } else {
+               js = JsonParsingState.ARRAY;
+           }
+
+       },
        ']' => {
-                  js = JsonParsingState.NONE;
-                  x = 0;
-                  %%printStrNumNum("ARRAY End", cpos, level);
-                  level -= 1;
-              },
+           print("STACK Last {} {}\n", cpos, u16(state_stack.last() catch |_| JsonParsingState.NONE));
+           print("ARRAY End {} {}\n", cpos, level);
+           level -= 1;
+           js = try state_stack.pop(); // pop of ARRAY
+           storage.up();
+       },
        '{' => {
-                  js = JsonParsingState.OBJECT;
-                  x = 0;
+                  js = JsonParsingState.OBJECT_KEY; // what we expect next
+                  jsidx = try state_stack.push(JsonParsingState.OBJECT_KEY);
                   level += 1;
-                  %%printStrNumNum("OBJECT Start", cpos, level);
-                  jstats.objects += 1;
-                  jstats.deepest = max(jstats.deepest, usize(level));
-                  var jhm: JasonHM = undefined;
-                  jhm.init(&debug.global_allocator);
-                  var jd = JsonNode {.kind = JsonType.JSONObject, .jobject = JsonOA.JSONObject {jhm} };
-                  %%jd.print(io.stdout);
-                  %%jl.append(jd);
-                  current_object = &jd;
+                  print("OBJECT Start {} {}\n", cpos, level);
+                  jstats.addObject(level);
+                  jv = JsonValue { .JSONObject = 0 };
+                  try storage.add(&jv);
               },
        '}' => {
-                  js = JsonParsingState.NONE;
-                  x = 0;
-                  %%printStrNumNum("OBJECT End", cpos, level);
-                  if (const co ?= current_object) {
-                      %%co.print(io.stdout);
-                  }
+                  print("STACK Last {} {}\n", cpos, u16(state_stack.last() catch |_| JsonParsingState.NONE));
+                  print("OBJECT End {} {}\n", cpos, level);
                   level -= 1;
+                  js = try state_stack.pop();
+                  storage.up();
               },
        // zig TODO: '0' ... '9', '-' =>
        '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' =>  { // numeric
                   var epos = pos;
                   var must_be_int = true;
-                  while (epos < buf.len; epos += 1) {
+                  while (epos < buf.len) : (epos += 1) {
                       switch (buf[epos]) {
                       // zig TODO: '0' ... '9'
                       '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {}, // or continue
@@ -255,55 +690,59 @@ fn parseJson(buf: []u8) -> %void {
                   }
                   pos = epos;
                   if (must_be_int) {
-                      const  v: isize = io.parseUnsigned(isize, buf[cpos...epos], 10) %% |err| {
-                          @unreachable();
-                      };
-                      var jd = JsonNode {.kind = JsonType.JSONInteger {v},
-                          .jobject = undefined};
-                      %%jd.print(io.stdout);
-                      %%jl.append(jd);
+                      const  v: isize = try parseUnsigned(isize, buf[cpos .. epos], 10);
+                      //%% |err| {
+                      //    @unreachable();
+                      //};
+                      jv = JsonValue{.JSONInteger = v};
+                      print("key='{}'\n", key);
+                      try jv.print(stdout_stream);
+                      try storage.addKV(key, &jv);
                   } else {
-                      const v = %%atod(buf[cpos...epos]);
-                      const jd = JsonNode {.kind = JsonType.JSONDouble {v},
-                          .jobject = undefined};
-                      %%printStrNumNum(buf[cpos...epos], cpos, isize(pos));
-                      %%jd.print(io.stdout);
-                      %%jl.append(jd);
+                      const v = try atod(buf[cpos .. epos]);
+                      jv = JsonValue{.JSONDouble = v};
+                      try jv.print(stdout_stream);
+                      try storage.addKV(key, &jv);
+                  }
+                  if (js == JsonParsingState.OBJECT_VALUE) {
+                      js = JsonParsingState.OBJECT_KEY;
                   }
               },
-       '"' => { // must be a string
+       '"', '\'' => { // must be a string (accept ', borrowed from LaxJson)
+                const echar = ch;
                 var epos = pos;
-                if (buf[epos] == '"') {
+                if (buf[epos] == echar) {
                    pos += 1;
-                   %%printStrNumNum("EMPTY STRING", cpos, level);
+                   print("EMPTY STRING {} {}\n", cpos, level);
                 } else {
                    // must track the result
                    var esc = usize(0);
-                   while (epos < buf.len; epos += 1) {
+                   while (epos < buf.len) : (epos += 1) {
                       const sch = buf[epos];
                       // well, it could be escaped and unicode
                       if (sch > 127) {
-                         var uclen = usize(0);
-                         switch (sch & 0xfc) {
-                         0xfc => uclen = 6,
-                         0xf8 => uclen = 5,
-                         0xf0 => uclen = 4,
-                         0xe0 => uclen = 3,
-                         0xc0, 0xc1 => uclen = 2,
-                         else => uclen = 1,
-                         }
-                         %%printStrNumNum("UNICODE", uclen, isize(epos));
-                         %%printStrNumNum(buf[cpos...epos+uclen], esc, isize(epos));
+                          const v = sch & 0xfc;
+                          var uclen: usize = 0;
+                          switch (u8(v)) {
+                              0xfc => uclen = 6,
+                              0xf8 => uclen = 5,
+                              0xf0 => uclen = 4,
+                              0xe0 => uclen = 3,
+                              0xc0, 0xc1 => uclen = 2,
+                              else => uclen = 1,
+                           }
+                          print("UNICODE {} {}\n", uclen, isize(epos));
+                          print("{} {} {}\n", buf[cpos .. epos+uclen], esc, isize(epos));
                       }
-                      // %%printStrNumNum(buf[cpos...epos+1], esc, isize(epos));
                       if (esc == 0)
                       {
-                          if (sch == '"') break; // good
+                          if (sch == echar) break; // good
                           if (sch == '\\') esc += 1;
                           continue;
                       } else if (esc == 1) {
+                          if (sch == echar) { esc = 0; continue; }
                           switch (sch) {
-                          '\\', '/', '"',
+                          '\\', '/',
                           'b', 'n', 'r', 'f', 't' => {esc = 0; continue; },
                           'u' => { esc += 1; continue; },
                           else => return error.JsonError,
@@ -321,55 +760,32 @@ fn parseJson(buf: []u8) -> %void {
                               esc = 0;
                           }
                       } else {
-                          %%printStrNumNum("ERROR STRING", esc, isize(epos));
-                          %%printStrNumNum(buf[cpos...epos], esc, isize(epos));
+                          print("ERROR STRING {} {}\n", esc, isize(epos));
+                          print("{} {} {}\n", buf[cpos .. epos], esc, isize(epos));
                           return error.JsonError;
                       }
                    }
                    pos = epos + 1;
-                   if (esc > 0) %%printStrNumNum("ESC", esc, level);
-                   //%%printStrNumNum(buf[cpos...pos], cpos, isize(pos));
-                   const jd = JsonNode {.kind = JsonType.JSONString {buf[cpos...pos]}, .jobject = undefined };
-                   %%jd.print(io.stdout);
-                   %%jl.append(jd);
-                   if (js == JsonParsingState.OBJECT) {
-                      if (x == 0) {
-                          key = buf[cpos...pos];
-                          // for (buf[cpos...pos]) |*d, i| {
-                          //     key[i] = *d;
-                          // }
-                          // key[pos - cpos] = 0;
-                          x = 1;
-                      } else if (x == 1) {
-                          if (const co ?= current_object) {
-                              if (const jo ?= co.jobject) {
-                                  // jo should now be the unwrapped thingy
-                                  // we putting stuff from unknown location
-                                  %%io.stdout.write("Putting -> ");
-                                  %%io.stdout.write(key);
-                                  %%jd.print(io.stdout);
-                                  // switch (jo) {
-                                  // JSONObject =>  |y| {
-                                  //     y.put(key, jd.kind) %% |err| {
-                                  //         %%io.stdout.printf(", failed.");
-                                  //         @unreachable();
-                                  //     };
-                                  //  },
-                                  // else => @unreachable(),
-                                  // }
-                                  // %%io.stdout.printf("\n");
-                              }
-                          }
-                          x = 0;
-                      }
+                   if (esc > 0) print("ESC {} {}\n", esc, level);
+                   jv = JsonValue{.JSONString = buf[cpos .. pos]};
+                   try jv.print(stdout_stream);
+                   if (js == JsonParsingState.OBJECT_KEY) {
+                       key = buf[cpos .. pos];
+                       js = JsonParsingState.OBJECT_COLON;
+                   } else if (js == JsonParsingState.OBJECT_VALUE) {
+                       js = JsonParsingState.OBJECT_KEY;
+                       try storage.addKV(key, &jv);
+                   } else if ((js == JsonParsingState.ARRAY) or (js == JsonParsingState.OBJECT_COLON)) {
+                       try storage.addKV(key, &jv);
+                   } else {
+                       print("{} hmm\n", u16(js));
                    }
-                }
+              }
        },
        'n' => {   // null?
                   if (cpos + 3 < buf.len) {
-                     const wanted = "ull";
                      var r = true;
-                     for (wanted) |c,i| {
+                     for ("ull") |c,i| {
                          if (c != buf[pos + i]) {
                              r = false;
                              break;
@@ -377,11 +793,13 @@ fn parseJson(buf: []u8) -> %void {
                      }
                      if (r == true)
                      {
-                        const jd = JsonNode {.kind = JsonType.JSONNull {}, .jobject = undefined };
-                        %%jd.print(io.stdout);
-                        %%jl.append(jd);
-                        //%%printStrNumNum("NULL", cpos, level);
-                        pos += 3;
+                         jv = JsonValue{.JSONNull = {}};
+                         try jv.print(stdout_stream);
+                         try storage.addKV(key, &jv);
+                         pos += 3;
+                         if (js == JsonParsingState.OBJECT_VALUE) {
+                             js = JsonParsingState.OBJECT_KEY;
+                         }
                      }
                   } else {
                      return error.JsonError;
@@ -389,10 +807,9 @@ fn parseJson(buf: []u8) -> %void {
               },
        'f' => {   // false?
                   if (cpos + 4 < buf.len) {
-                     const value = "alse";
                      var r = true;
                      // if ()
-                     for (value) |c,i| {
+                     for ("alse") |c,i| {
                          if (c != buf[pos + i]) {
                              r = false;
                              break;
@@ -400,21 +817,22 @@ fn parseJson(buf: []u8) -> %void {
                      }
                      if (r == true)
                      {
-                        //%%printStrNumNum("FALSE", cpos, level);
-                        const jd = JsonNode {.kind = JsonType.JSONBool {true}, .jobject = undefined };
-                        %%jd.print(io.stdout);
-                        %%jl.append(jd);
-                        pos += 4;
+                         jv = JsonValue{.JSONBool = false};
+                         try jv.print(stdout_stream);
+                         pos += 4;
+                         try storage.addKV(key, &jv);
                      }
                   } else {
                      return error.JsonError;
+                  }
+                  if (js == JsonParsingState.OBJECT_VALUE) {
+                      js = JsonParsingState.OBJECT_KEY;
                   }
               },
        't' => {   // true?
                   if (cpos + 3 < buf.len) {
-                     const wanted = "rue";
                      var r = true;
-                     for (wanted) |c,i| {
+                     for ("rue") |c,i| {
                          if (c != buf[pos + i]) {
                              r = false;
                              break;
@@ -422,88 +840,60 @@ fn parseJson(buf: []u8) -> %void {
                      }
                      if (r == true)
                      {
-                        // %%printStrNumNum("TRUE", cpos, level);
-                        // until unions work but we have enums with payload, hurray!!
-                        const jd = JsonNode {.kind = JsonType.JSONBool {true}, .jobject = undefined };
-                        %%jd.print(io.stdout);
-                        %%jl.append(jd);
-                        pos += 3;
+                         jv = JsonValue{.JSONBool = true};
+                         print("{}:\n", level);
+                         try jv.print(stdout_stream);
+                         pos += 3;
+                         try storage.addKV(key, &jv);
                      }
                   } else {
-                     return error.JsonError;
+                      return error.JsonError;
+                  }
+                  if (js == JsonParsingState.OBJECT_VALUE) {
+                      js = JsonParsingState.OBJECT_KEY;
                   }
               },
        else => {
-                   %%printStrNumNum("???", cpos, level);
+                   print("??? {} {}\n", cpos, level);
                    return error.JsonError;
-                   //continue;
                },
        }
-       // %%printStrNumNum("JSON level", cpos, level);
    }
 
    if (level == 0) {
-       %%io.stdout.printf("JSON may be ok\n");
+       print("JSON may be ok\n");
    } else {
-       %%io.stdout.printf("Possibly bad JSON\n");
+       print("Possibly bad JSON\n");
    }
-   if (const co ?= current_object) {
-       %%co.print(io.stdout);
-   }
-   %%jstats.print(io.stdout);
+   try jstats.print(stdout_stream);
+   print("state_stack: level={}\n", level);
    {var it = usize(0);
-       while (it < jl.len; it += 1) {
-           %%jl.items[it].print(io.stdout);
+       while (it < state_stack.len) : (it += 1) {
+               print("{} -> {}\n", it, u16(state_stack.items[it]));
        }
    }
+
+   try storage.print(stdout_stream);
+   }
 }
 
-// cannot have noalias on non-pointer but const
-fn printNumberAndArg(arg_num: usize, arg_str: []const u8) -> %void {
-    %%io.stdout.printInt(usize, arg_num);
-    %%io.stdout.write(": ");
-    // these are possible: arg_str.len *= 20, arg_str.len = 0;
-    // how can I move that pointer? arg_str.ptr = u8(&arg_num);
-    %%io.stdout.write(arg_str);
-    %%io.stdout.write(", ");
-    %%io.stdout.printInt(usize, arg_str.len);
-    // finally newline and flush (not format)
-    %%io.stdout.printf(" bytes?\n");
-    // failed, my bad probably
-    //%%debug.printStackTrace();
-}
-
-pub fn main(args: [][] u8) -> %void {
-    // var bstring = BString {.str = zeroes, .pos = 0,};
-    // How do I make a BString with a larger string buffer?
-    var buf: [16 * 1024]u8 = zeroes; // undefined?
-    %%io.stdout.printf(args[0]);
-    %%io.stdout.printf(" a test program\n");
-    // var pargs = args[1...2];
-    for (args[1...]) |arg, i| {
-        %%printNumberAndArg(i, arg);
-        var is: io.InStream = undefined;
-        is.open(arg) %% |err| {
-            %%io.stderr.printf("Unable to open file: ");
-            %%io.stderr.printf(@errorName(err));
-            %%io.stderr.printf("\n");
-            return err;
-        }; //else {
-        //defer %%is.close();
-        const sz = is.read(buf) %% |err| {
-            %%io.stderr.write("Unable to read file: ");
-            %%io.stderr.write(@errorName(err));
-            %%io.stderr.printf("\n");
-            return err;
-        };
-        %%printNumberAndArg(sz, " bytes read");
-        %%printNumberAndArg(%%is.getPos(), "getPos");
-        %%parseJson(buf[0...sz]);
-        is.close() %% |err| {
-            %%io.stderr.write("Unable to close file: ");
-            %%io.stderr.write(@errorName(err));
-            %%io.stderr.printf("\n");
-            return err;
-        };
+pub fn main() %void {
+    var args = os.args();
+    print("{} a test program\n", args.nextPosix());
+    var i: u16 = 0;
+    _ = try getStdOutStream();
+    while (args.nextPosix()) |arg| {
+            print("arg[{}] = '{}'\n", i, arg);
+            var file = try io.File.openRead(arg, allocator);
+            defer file.close();
+            const file_size = try file.getEndPos();
+            print("{} bytes\n", file_size);
+            var file_in_stream = io.FileInStream.init(&file);
+            var buf_stream = io.BufferedInStream.init(&file_in_stream.stream);
+            const st = &buf_stream.stream;
+            const contents = try st.readAllAlloc(allocator, file_size + 1);
+            defer allocator.free(contents);
+            try parseJson(contents);
+            i += 1;
     }
 }

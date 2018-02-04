@@ -27,9 +27,9 @@
       "eu",
       "elit"
     ],
-    "friends": [
+    "friends": [  // we may have friends
       {
-        "id": 0,
+        'id': 0,
         "name": "Earline Francis"
       },
       {

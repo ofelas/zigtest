@@ -1,4 +1,4 @@
-[
+         [
   {
     "_id": "57d060114a08b9d5f63cc0c0",
     "index": 0,
@@ -43,7 +43,7 @@
     ],
     "greeting": "Hello, Camacho Hopkins! You have 9 unread messages.",
     "favoriteFruit": "strawberry"
-  }
+  },
   {
     "_id": "57d060118c2aba4d7870b8d7",
     "index": 1,
@@ -315,5 +315,6 @@
     "favoriteFruit": "banana",
     "favoriteUnicode": "banana\u8888\\\/\"\uABCD\uFEDC\\ \nEFGH",
     "thisisunicode": "åß"
-  }
+  },
+	     ["a", "b", "c", true, false, 1e0, -0.0, 33, -44.3, 0.33333333333333333333333333333333333333333333333333333333333333333333, 99999999999999999, 100e319]
 ]
