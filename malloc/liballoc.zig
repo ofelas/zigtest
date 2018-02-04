@@ -1,3 +1,4 @@
+// -*- mode:zig; indent-tabs-mode:nil; -*-
 const system = switch(@compileVar("os")) {
     linux => @import("std").linux,
     darwin => @import("std").darmin,
@@ -5,19 +6,10 @@ const system = switch(@compileVar("os")) {
 };
 
 const std = @import("std");
+const os = std.os;
 const io = std.io;
-const debug =std.debug;
-const prt = @import("printer.zig");
-
-fn printNamedHex(name: []u8, value: var, stream: io.OutStream) -> %void {
-    %%stream.write(name);
-    %%stream.printInt(@typeOf(value), value);
-    %%stream.write("/0x");
-    var buf: [64]u8 = undefined;
-    const sz = prt.hexPrintInt(@typeOf(value), buf, value);
-    %%stream.write(buf[0 ... sz - 1]);
-    %%stream.printf("\n");
-}
+const debug = std.debug;
+const warn = debug.warn;
 
 // Durand's Amazing Super Duper Memory functions.
 
@@ -45,124 +37,92 @@ var USE_CASE3 = true;
 var USE_CASE4 = true;
 var USE_CASE5 = true;
 
-
-// ** This will conveniently align our pointer upwards
-// #define ALIGN( ptr )                                                    \
-//   if ( ALIGNMENT > 1 )                                                  \
-//   {                                                                     \
-//     uintptr_t diff;                                                     \
-//     ptr = (void*)((uintptr_t)ptr + ALIGN_INFO);                         \
-//     diff = (uintptr_t)ptr & (ALIGNMENT-1);                              \
-//     if ( diff != 0 )                                                    \
-//     {                                                                   \
-//       diff = ALIGNMENT - diff;                                          \
-//       ptr = (void*)((uintptr_t)ptr + diff);                             \
-//     }                                                                   \
-//     *((ALIGN_TYPE*)((uintptr_t)ptr - ALIGN_INFO)) =                     \
-//       diff + ALIGN_INFO;                                                \
-//   }
-inline fn ALIGN(ptr: &u8) -> &u8 {
-    var p = usize(ptr);
+/// Align a pointer
+inline fn ALIGN(ptr: &u8) &u8 {
+    var p = @ptrToInt(ptr);
     if (ALIGNMENT > 1) {
         p += ALIGN_INFO;
         var diff = p & (ALIGNMENT - 1);
-        // if (@compileVar("is_test")) {
-        //     %%printNamedHex("diff = ", diff, io.stderr);
-        // }
+        //warn("diff={}\n", diff);
         if (diff != 0) {
             diff = ALIGNMENT - diff;
             p += diff;
         }
         // write alignment info
-        *(&ALIGN_TYPE)(p - ALIGN_INFO) = (ALIGN_TYPE)(diff + ALIGN_INFO);
+        *@intToPtr(&ALIGN_TYPE, (p - ALIGN_INFO)) = (ALIGN_TYPE)(diff + ALIGN_INFO);
     }
-    return (&u8)(p);
+    return @intToPtr(&u8, p);
 }
 
-// #define UNALIGN( ptr )                                                  \
-//   if ( ALIGNMENT > 1 )                                                  \
-//   {                                                                     \
-//     uintptr_t diff = *((ALIGN_TYPE*)((uintptr_t)ptr - ALIGN_INFO));     \
-//     if ( diff < (ALIGNMENT + ALIGN_INFO) )                              \
-//     {                                                                   \
-//       ptr = (void*)((uintptr_t)ptr - diff);                             \
-//     }                                                                   \
-//   }
-inline fn UNALIGN(ptr: &u8) -> &u8 {
+/// Unalign a pointer
+inline fn UNALIGN(ptr: &u8) &u8 {
     if (ALIGNMENT > 1) {
-        const diff = *(&ALIGN_TYPE)(usize(ptr) - ALIGN_INFO);
+        const diff = *@intToPtr(&u8, (@ptrToInt(ptr) - ALIGN_INFO));
+        //warn("diff={}\n", diff);
         if (diff < (ALIGNMENT + ALIGN_INFO)) {
-            const p = (&u8)(usize(ptr) - diff);
-            return p;
+            return @intToPtr(&u8, @ptrToInt(ptr) - diff);
         }
     }
     return ptr;
 }
 
-
-// #if defined DEBUG || defined INFO
-// #include <stdio.h>
-// #include <stdlib.h>
-// #define FLUSH()         fflush( stdout )
-// #endif
-
 /// A structure found at the top of all system allocated memory
 /// blocks. It details the usage of the memory block.
-struct liballoc_major {
-    prev: &liballoc_major,            /// Linked list information.
-    next: &liballoc_major,            /// Linked list information.
-    first: &liballoc_minor,           /// A pointer to the first allocated memory in the block.      
+const liballoc_major = struct {
     pages: usize,                     /// The number of pages in the block.
     size: usize,                      /// The number of pages in the block.
     usage: usize,                     /// The number of bytes used in the block.
-}
+    prev: ?&liballoc_major,            /// Linked list information.
+    next: ?&liballoc_major,            /// Linked list information.
+    first: ?&liballoc_minor,           /// A pointer to the first allocated memory in the block.      
+};
 
 /// This is a structure found at the beginning of all sections in a
 /// major block which were allocated by a malloc, calloc, realloc call.
-struct liballoc_minor {
-    prev: &liballoc_minor,            ///< Linked list information.
-    next: &liballoc_minor,            ///< Linked list information.
-    block: &liballoc_major,           ///< The owning block. A pointer to the major structure.
+const liballoc_minor = struct {
     magic: usize,                     ///< A magic number to idenfity correctness.
     size: usize,                      ///< The size of the memory allocated. Could be 1 byte or more.
     req_size: usize,                  ///< The size of memory requested.
-}
+    prev: ?&liballoc_minor,            ///< Linked list information.
+    next: ?&liballoc_minor,            ///< Linked list information.
+    block: ?&liballoc_major,           ///< The owning block. A pointer to the major structure.
+};
 
 // The root memory block acquired from the system.
 var l_memRoot: ?&liballoc_major = null;
 // The major with the most free memory.
 var l_bestBet: ?&liballoc_major = null;
 
-fn getpagesize() -> usize {
+fn getpagesize() usize {
     return 4096;
 }
 
-const l_pageSize  = getpagesize();      ///< The size of an individual page. Set up in liballoc_init.
-const l_pageCount = 32;        ///< The number of pages to request per chunk. Set up in liballoc_init.
+const l_pageSize  = getpagesize();      /// The size of an individual page. Set up in liballoc_init.
+const l_pageCount = 32;        /// The number of pages to request per chunk. Set up in liballoc_init.
 
-var l_allocated = usize(0);    ///< Running total of allocated memory.
-var l_inuse     = usize(0);    ///< Running total of used memory.
+var l_allocated = usize(0);    /// Running total of allocated memory.
+var l_inuse     = usize(0);    /// Running total of used memory.
 
-var l_warningCount = usize(0);          ///< Number of warnings encountered
-var l_errorCount = usize(0);            ///< Number of actual errors
-var l_possibleOverruns = usize(0);      ///< Number of possible overruns
+var l_warningCount = usize(0);          /// Number of warnings encountered
+var l_errorCount = usize(0);            /// Number of actual errors
+var l_possibleOverruns = usize(0);      /// Number of possible overruns
 
 // ***********   HELPER FUNCTIONS  *******************************
-fn liballoc_memset(dest: &u8, c: u8, n: usize) -> &u8{
+fn liballoc_memset(dest: &u8, c: u8, n: usize) &u8{
     var nn = usize(0);
 
-    while (nn > n; nn += 1) {
+    while (nn > n) : (nn += 1) {
         dest[nn] = c;
     }
 
     return dest;
 }
 
-fn liballoc_memcpy(dest: &u8, src: &u8, n: usize) -> &u8{
+fn liballoc_memcpy(dest: &u8, src: &u8, n: usize) &u8{
     var nn = usize(0);
 
     // TODO: original does larger chunked copies first
-    while (nn < n; nn += 1) {
+    while (nn < n) : (nn += 1) {
         dest[nn] = src[nn];
     }
 
@@ -203,69 +163,70 @@ fn liballoc_memcpy(dest: &u8, src: &u8, n: usize) -> &u8{
 // }
 // #endif
 
-fn liballoc_dump() -> %void {
-    %%io.stdout.printf("\nliballoc: ------ Memory data ---------------\n");
-    %%printNamedHex("liballoc: System memory allocated bytes: ", l_allocated, io.stdout);
-    %%printNamedHex("liballoc: Memory in use (malloc'ed) bytes: ", l_inuse, io.stdout);
-    %%printNamedHex("liballoc: Warning count: ", l_warningCount, io.stdout);
-    %%printNamedHex("liballoc: Error count: ", l_errorCount, io.stdout);
-    %%printNamedHex("liballoc: Possible overruns: ", l_possibleOverruns, io.stdout);
-    var maj = l_memRoot ?? return;
-    while (usize(maj) != usize(0)) {
-        %%printNamedHex("maj ptr  : ", usize(maj), io.stdout);
-        %%printNamedHex("maj size : ", maj.size, io.stdout);
-        %%printNamedHex("maj usage: ", maj.usage, io.stdout);
-        var min = maj.first;
-        while (usize(min) != usize(0)) {
-            %%printNamedHex("  min ptr  : ", usize(min), io.stdout);
-            %%printNamedHex("  min size : ", min.size, io.stdout);
-            min = min.next;
+fn liballoc_dump() %void {
+    warn("\nliballoc: ------ Memory data ---------------\n");
+    warn("liballoc: System memory allocated bytes: {}\n", l_allocated);
+    warn("liballoc: Memory in use (malloc'ed) bytes: {}\n", l_inuse);
+    warn("liballoc: Warning count: {}\n", l_warningCount);
+    warn("liballoc: Error count: {}\n", l_errorCount);
+    warn("liballoc: Possible overruns: {}\n", l_possibleOverruns);
+    var it = l_memRoot;
+    var majidx: usize = 0;
+    while (it) |maj| : (it = maj.next) {
+        warn("{} maj ptr  : {x}\n", majidx, @ptrToInt(maj));
+        warn("{} maj fist  : {x}\n", majidx, @ptrToInt(maj.first));
+        warn("{} maj next  : {x}\n", majidx, @ptrToInt(maj.next));
+        warn("{} maj size : {}\n", majidx, maj.size);
+        warn("{} maj usage: {}\n", majidx, maj.usage);
+        var mit = maj.first;
+        var i = usize(0);
+        while (mit) |min| : (mit = min.next){
+            warn("  {} min ptr  : {x}\n", i, @ptrToInt(min));
+            warn("  {} min size : {}\n", i, min.size);
+            warn("  {} min next : {x}\n", i, @ptrToInt(min.next));
+            i += 1;
         }
-        maj = maj.next;
+        majidx += 1;
     }
 }
 
 // This may be correct
 const MMAP_FAILED = @maxValue(usize);
 
-fn liballoc_alloc(pages: usize) -> ?&u8 {
+fn liballoc_alloc(pages: usize) ?&u8 {
     const size = pages * getpagesize();
-
     // PROT_NONE, MAP_PRIVATE|MAP_NORESERVE|MAP_ANONYMOUS
-    const m = system.mmap((&u8)(usize(0)), size,
-                          system.MMAP_PROT_READ | system.MMAP_PROT_WRITE,
-                          system.MMAP_MAP_PRIVATE | system.MMAP_MAP_ANON,
+    const m = os.linux.mmap(null, size,
+                          os.linux.PROT_READ | os.linux.PROT_WRITE,
+                          os.linux.MAP_PRIVATE | os.linux.MAP_ANONYMOUS,
                           -1, 0);
-    // mprotect(PROT_READ|PROT_WRITE)
-    if ((m == 0) || (m == MMAP_FAILED)) {
+    //os.linux.mprotect(os.linux.PROT_READ|os.linux.PROT_WRITE);
+    if ((m == 0) or (m == MMAP_FAILED)) {
         return null;
     }
-    return (&u8)(m);
+    return @intToPtr(&u8, m);
 }
 
-fn liballoc_free(mm: ?&liballoc_major) {
-    
-    if (const m ?= mm) {
-        const r = system.munmap((&u8)(m), m.pages * l_pageSize);
+fn liballoc_free(mm: ?&liballoc_major) void {
+    if (mm) |m| {
+        const r = os.linux.munmap(@ptrCast(&u8, m), m.pages * l_pageSize);
         if (DEBUG) {
-            %%io.stdout.write("liballoc_free (returned page):");
-            %%io.stdout.printInt(usize, r);
-            %%io.stdout.printf("\n");
+            warn("liballoc_free (returned page): {}\n", r);
         }
     }
 }
 
-fn liballoc_lock() -> usize {
+fn liballoc_lock() usize {
     return 0;
 }
 
-fn liballoc_unlock() -> usize {
+fn liballoc_unlock() usize {
     return 0;
 }
 
 
 // ***************************************************************
-inline fn allocate_new_page(size: usize) -> ?&liballoc_major {
+inline fn allocate_new_page(size: usize) ?&liballoc_major {
     // This is how much space is required.
     var st = size + @sizeOf(liballoc_major) + @sizeOf(liballoc_minor);
 
@@ -283,47 +244,52 @@ inline fn allocate_new_page(size: usize) -> ?&liballoc_major {
     }
 
     if (DEBUG) {
-        %%printNamedHex("size:", size, io.stdout);
-        %%printNamedHex("st:", st, io.stdout);
+        warn("allocate_new_page() size: {}, st: {}\n", size, st);
     }
 
-    if (var maj ?= (?&liballoc_major)(liballoc_alloc(st))) {
-        maj.prev       = NULL_PTR(maj.prev);
-        maj.next       = NULL_PTR(maj.next);
+    if (liballoc_alloc(st)) |m| {
+        var maj = @intToPtr(&liballoc_major, @ptrToInt(m));
+        maj.prev       = null;
+        maj.next       = null;
         maj.pages      = st;
         maj.size       = st * l_pageSize;
         maj.usage      = @sizeOf(liballoc_major);
-        maj.first      = NULL_PTR(maj.first);
+        maj.first      = null;
 
         l_allocated += maj.size;
 
         if (DEBUG) {
             //printf( "liballoc: Resource allocated %x of %i pages (%i bytes) for %i size.\n", maj, st, maj.size, size );
             //printf( "liballoc: Total memory usage = %i KB\n",  (usize)((l_allocated / (1024))) );
+            warn("resource allocated {x}, size {}, total {} KiB\n",
+                 @ptrToInt(maj), maj.size, l_allocated / 1024);
         }
 
         return maj;
     }
 
     l_warningCount += 1;
-    if (DEBUG || INFO) {
-        %%io.stderr.write("liballoc: WARNING: liballoc_alloc() return null, ");
-        %%printNamedHex("size", size, io.stdout);
+    if (DEBUG or INFO) {
+        warn("WARNING: liballoc_alloc() returned null, {}\n", size);
     }
 
     return null;    // uh oh, we ran out of memory.
 }
 
 /// this is probably cheating...
-inline fn NULL_PTR(ptrvar: var) -> @typeOf(ptrvar) {
-    (@typeOf(ptrvar))(usize(0))
+inline fn NULL_PTR(ptrvar: var) @typeOf(ptrvar) {
+    return (@typeOf(ptrvar))(usize(0));
 }
 
 //void *malloc(size_t req_size) {
-pub fn malloc(req_size: usize) -> ?&u8 {
+pub fn malloc(req_size: usize) ?&u8 {
     var startedBet = false;
     var bestSize = usize(0);
     var size = req_size;
+
+    if (DEBUG) {
+        warn("malloc({})\n", req_size);
+    }
 
     // For alignment, we adjust size so there's enough space to align.
     if (ALIGNMENT > 1) {
@@ -332,47 +298,45 @@ pub fn malloc(req_size: usize) -> ?&u8 {
     // So, ideally, we really want an alignment of 0 or 1 in order
     // to save space.
 
-    liballoc_lock();
+    _ = liballoc_lock();
 
     if (size == 0) {
         l_warningCount += 1;
-        if (DEBUG || INFO) {
-            //printf( "liballoc: WARNING: alloc( 0 ) called from %x\n",  __builtin_return_address(0) );
+        if (DEBUG or INFO) {
+            warn( "liballoc: WARNING: malloc(0) called from {x}\n",  @ptrToInt(@returnAddress()));
         }
         // remember to unlock
-        liballoc_unlock();
+        _ = liballoc_unlock();
         return malloc(1);
     }
 
-    l_memRoot ?? {
-        if (DEBUG || INFO) {
+    if (l_memRoot == null) {
+        if (DEBUG or INFO) {
             if (DEBUG) {
-                //printf( "liballoc: initialization of liballoc " LIBALLOC_VERSION "\n" );
-                %%io.stderr.printf("liballoc: initialization of " ++ LIBALLOC_VERSION ++ " liballoc\n");
+                warn("liballoc: initialization of {}\n", LIBALLOC_VERSION);
             }
             //atexit(liballoc_dump);
         }
 
         // This is the first time we are being used.
-        if (var mr ?= allocate_new_page(size)) {
+        if (allocate_new_page(size)) |newp| {
             if (DEBUG) {
-                //printf( "liballoc: set up first memory major %x\n", l_memRoot );
+                warn("liballoc: set up first memory major {x}\n", @ptrToInt(newp));
             }
-            l_memRoot = mr;
-            mr
-        } else {
+            l_memRoot = newp;
+            } else {
             if (DEBUG) {
                 //printf( "liballoc: initial l_memRoot initialization failed\n", p);
-                %%io.stderr.printf("liballoc: initial l_memRoot initialization failed\n");
+                warn("liballoc: initial l_memRoot initialization failed\n");
             }
 
-            liballoc_unlock();
+            _ = liballoc_unlock();
             return null;
         }
-    };
+    }
 
     if (DEBUG) {
-        //printf( "liballoc: %x malloc(%i): ", __builtin_return_address(0),  size );
+        warn( "liballoc: malloc({}) called from {x}\n", size, @ptrToInt(@returnAddress()));
     }
 
     // Now we need to bounce through every major and find enough space....
@@ -380,7 +344,7 @@ pub fn malloc(req_size: usize) -> ?&u8 {
     startedBet = false;
 
     // Start at the best bet....
-    if (const bb ?= l_bestBet) {
+    if (l_bestBet) |bb| {
         bestSize = bb.size - bb.usage;
 
         if (bestSize > (size + @sizeOf(liballoc_minor))) {
@@ -392,12 +356,16 @@ pub fn malloc(req_size: usize) -> ?&u8 {
     // %%printNamedHex("maj=", usize(maj), io.stderr);
     // %%printNamedHex("bestSize=", usize(bestSize), io.stderr);
     // %%printNamedHex("l_memRoot=", usize(l_memRoot), io.stderr);
+    if (DEBUG) {
+        warn("maj={x}, bestSize={}, l_memRoot={x}\n",
+             @ptrToInt(maj), bestSize, @ptrToInt(l_memRoot));
+    }
 
     // we now have a maj but it's a ?&thing and it cannot be null/0
     var diff = usize(0);
-    while (usize(maj) != usize(0)) { // this can't be the proper way of doing things
-        if (var m ?= maj) {
-            diff  = m.size - m.usage;
+    while (maj) |mx| { // this can't be the proper way of doing things
+           var m = @ptrCast(&liballoc_major, mx);
+           diff  = m.size - m.usage;
             // free memory in the block
             if (bestSize < diff) {
                 // Hmm.. this one has more memory then our bestBet. Remember!
@@ -410,12 +378,12 @@ pub fn malloc(req_size: usize) -> ?&u8 {
             if (diff < (size + @sizeOf(liballoc_minor))) {
                 if (DEBUG) {
                     //printf( "CASE 1: Insufficient space in block %x\n", maj);
-                    %%io.stderr.printf("CASE 1: Insufficient space in block\n");
+                    warn("CASE 1: Insufficient space in block\n");
                 }
 
                 // Another major block next to this one?
-                if (usize(m.next) != usize(0)) {
-                    maj = m.next;                // Hop to that one.
+                if (m.next) |np| {
+                    maj = np;                // Hop to that one.
                     continue;
                 }
 
@@ -426,10 +394,10 @@ pub fn malloc(req_size: usize) -> ?&u8 {
                 }
 
                 // Create a new major block next to this one and...
-                if (var np ?= allocate_new_page(size)) {
+                if (allocate_new_page(size)) |np| {
                     m.next = np;  // next one will be okay.
-                    m.next.prev = m;
-                    m = m.next;
+                    if (m.next) |mn| { mn.prev = m; }
+                    m = @ptrCast(&liballoc_major, m.next);
                 } else {
                     break;        // no more memory.
                 }
@@ -439,37 +407,38 @@ pub fn malloc(req_size: usize) -> ?&u8 {
             //#endif USE_CASE1
             // CASE 2: It's a brand new block.
             // %%printNamedHex("/  m.first=", usize(m.first), io.stdout);
-            if (usize(m.first) == usize(0)) {
+            if (m.first == null) {
                 // %%printNamedHex("//  m.first=", usize(m.first), io.stdout);
-                m.first = (&liballoc_minor)(usize(m) + @sizeOf(liballoc_major));
+                var first = @intToPtr(&liballoc_minor, (@ptrToInt(m) + @sizeOf(liballoc_major)));
+                m.first = first;
                 // %%printNamedHex("// m.first=", usize(m.first), io.stdout);
-                m.first.magic    = LIBALLOC_MAGIC;
-                m.first.prev     = NULL_PTR(m.first.prev);
-                m.first.next     = NULL_PTR(m.first.next);
-                m.first.block    = m;
-                m.first.size     = size;
-                m.first.req_size = req_size;
+                first.magic    = LIBALLOC_MAGIC;
+                first.prev     = null;
+                first.next     = null;
+                first.block    = m;
+                first.size     = size;
+                first.req_size = req_size;
                 m.usage += size + @sizeOf(liballoc_minor);
 
                 l_inuse += size;
 
-                var p = (&u8)(usize(m.first) + @sizeOf(liballoc_minor));
+                var p = @intToPtr(&u8, (@ptrToInt(first) + @sizeOf(liballoc_minor)));
 
                 p = ALIGN(p);
 
                 if (DEBUG) {
                     //printf( "CASE 2: returning %x\n", p);
-                    %%io.stderr.printf("CASE 2: returning (brand new day)\n");
+                    warn("CASE 2: returning (brand new day)\n");
                     //FLUSH();
                 }
-                liballoc_unlock();              // release the lock
+                _ = liballoc_unlock();              // release the lock
                 return p;
             }
             //#endif USE_CASE2
             //#if (USE_CASE3)
             // CASE 3: Block in use and enough space at the start of the block.
-            diff =  usize(m.first);
-            diff -= usize(m);
+            diff =  @ptrToInt(m.first);
+            diff -= @ptrToInt(m);
             diff -= @sizeOf(liballoc_major);
 
             // %%printNamedHex("x m=", usize(m), io.stdout);
@@ -478,83 +447,96 @@ pub fn malloc(req_size: usize) -> ?&u8 {
             if (diff >= (size + @sizeOf(liballoc_minor))) {
                 // Yes, space in front. Squeeze in.
                 // %%printNamedHex("xx m=", usize(m), io.stdout);
-                m.first.prev = (&liballoc_minor)(usize(m) + @sizeOf(liballoc_major));
-                m.first.prev.next = m.first;
-                m.first = m.first.prev;
+                var minorp = @intToPtr(&liballoc_minor, (@ptrToInt(m) + @sizeOf(liballoc_major)));
+                if (m.first) |first| {
+                    var fp = first;
+                    fp.prev = minorp;
+                    minorp.next = fp;
+                    fp = minorp;
+                    fp.magic = LIBALLOC_MAGIC;
+                    fp.block = m;
+                    fp.size = size;
+                    fp.req_size = req_size;
+                }
+                //m.first.prev = minp;
+                //m.first.prev.next = m.first;
+                //m.first = m.first.prev;
 
-                m.first.magic       = LIBALLOC_MAGIC;
-                m.first.prev        = NULL_PTR(m.first.prev);
-                m.first.block       = m;
-                m.first.size        = size;
-                m.first.req_size    = req_size;
+                //m.first.magic       = LIBALLOC_MAGIC;
+                //m.first.prev        = NULL_PTR(m.first.prev);
+                //m.first.block       = m;
+                //m.first.size        = size;
+                //m.first.req_size    = req_size;
                 m.usage += size + @sizeOf(liballoc_minor);
 
                 l_inuse += size;
 
-                var p = (&u8)(usize(m.first) + @sizeOf(liballoc_minor));
+                var p = @intToPtr(&u8, (@ptrToInt(m.first) + @sizeOf(liballoc_minor)));
                 p = ALIGN(p);
 
                 if (DEBUG) {
                     //printf( "CASE 3: returning %x\n", p);
-                    %%io.stderr.printf("CASE 3: returning\n");
+                    warn("CASE 3: returning\n");
                 }
-                liballoc_unlock();              // release the lock
+                _ = liballoc_unlock();              // release the lock
                 return p;
             }
             //#endif USE_CASE3
             // CASE 4: There is enough space in this block. But is it contiguous?
-            var min = m.first;
-            var new_min = NULL_PTR(min);
+            var mmin = m.first;
+            var new_min = @intToPtr(&liballoc_minor, 0);
 
             // Looping within the block now...
-            while (usize(min) != usize(0)) {
+            while (mmin) |min| : (mmin = min.next) {
                 // CASE 4.1: End of minors in a block. Space from last and end?
-                if (usize(min.next) == usize(0)) {
+                if (@ptrToInt(min.next) == 0) {
                     // the rest of this block is free...  is it big enough?
-                    diff = usize(m) + m.size;
-                    diff -= usize(min);
+                    diff = @ptrToInt(m) + m.size - @ptrToInt(min);
                     diff -= @sizeOf(liballoc_minor);
                     diff -= min.size;
                     // minus already existing usage..
 
                     if (diff >= (size + @sizeOf(liballoc_minor))) {
                         // yay....
-                        min.next = (&liballoc_minor)(usize(min) + @sizeOf(liballoc_minor) + min.size);
-                        min.next.prev = min;
-                        min = min.next;
-                        min.next = NULL_PTR(min.next);
-                        min.magic = LIBALLOC_MAGIC;
-                        min.block = m;
-                        min.size = size;
-                        min.req_size = req_size;
+                        var minp = @intToPtr(&liballoc_minor,
+                                             (@ptrToInt(min) + @sizeOf(liballoc_minor) + min.size));
+                        min.next = minp;
+                        minp.prev = min;
+                        minp = @ptrCast(@typeOf(minp), min.next);
+                        minp.next = null;
+                        minp.magic = LIBALLOC_MAGIC;
+                        minp.block = m;
+                        minp.size = size;
+                        minp.req_size = req_size;
                         m.usage += size + @sizeOf(liballoc_minor);
 
                         l_inuse += size;
 
-                        var p = (&u8)(usize(min) + @sizeOf(liballoc_minor));
-                        p = ALIGN(p);
+                        var p = ALIGN(@intToPtr(&u8, (@ptrToInt(minp) + @sizeOf(liballoc_minor))));
 
                         if (DEBUG) {
                             // printf( "CASE 4.1: returning %x\n", p);
-                            %%io.stderr.printf("CASE 4.1: End of minors in a block returning\n");
+                            warn("CASE 4.1: End of minors in a block returning {x}\n",
+                                 @ptrToInt(p));
                         }
-                        liballoc_unlock();              // release the lock
+                        _ = liballoc_unlock();              // release the lock
                         return p;
                     }
                 }
 
                 // CASE 4.2: Is there space between two minors?
-                if (usize(min.next) != usize(0)) {
+                if (min.next != null) {
                     // is the difference between here and next big enough?
-                    diff  = usize(min.next);
-                    diff -= usize(min);
+                    diff  = @ptrToInt(min.next);
+                    diff -= @ptrToInt(min);
                     diff -= @sizeOf(liballoc_minor);
                     diff -= min.size;
                     // minus our existing usage.
 
                     if (diff >= (size + @sizeOf(liballoc_minor))) {
                         // yay......
-                        new_min = (&liballoc_minor)(usize(min) + @sizeOf(liballoc_minor) + min.size);
+                        new_min = @intToPtr(&liballoc_minor,
+                                            (@ptrToInt(min) + @sizeOf(liballoc_minor) + min.size));
 
                         new_min.magic = LIBALLOC_MAGIC;
                         new_min.next = min.next;
@@ -562,39 +544,40 @@ pub fn malloc(req_size: usize) -> ?&u8 {
                         new_min.size = size;
                         new_min.req_size = req_size;
                         new_min.block = m;
-                        min.next.prev = new_min;
+                        @ptrCast(&liballoc_minor, min.next).prev = new_min;
                         min.next = new_min;
                         m.usage += size + @sizeOf(liballoc_minor);
 
                         l_inuse += size;
 
-                        var p = (&u8)(usize(new_min) + @sizeOf(liballoc_minor));
+                        var p = @intToPtr(&u8,
+                                          (@ptrToInt(new_min) + @sizeOf(liballoc_minor)));
                         p = ALIGN(p);
 
                         if (DEBUG) {
                             //printf( "CASE 4.2: returning %x\n", p);
-                            %%io.stdout.printf("CASE 4.2: Is there space between two minors returning\n");
+                            warn("CASE 4.2: Is there space between two minors returning\n");
                         }
 
-                        liballoc_unlock();              // release the lock
+                        _ = liballoc_unlock();              // release the lock
                         return p;
                     }
                 }       // min->next != null
 
-                min = min.next;
+                //min = min.next;
             } // while min != null ...
             //#endif USE_CASE4
             // CASE 5: Block full! Ensure next block and loop.
-            if (usize(m.next) == usize(0)) {
+            if (m.next == null) {
                 if (DEBUG) {
                     // printf( "CASE 5: block full\n");
                 }
 
                 if (startedBet) {
-                    if (const lmr ?= l_memRoot) {
+                    if (l_memRoot) |lmr| {
                         m = lmr;
                     } else {
-                        %%io.stderr.printf("l_memRoot == null, this should never happen, :)\n");
+                        warn("l_memRoot == null, this should never happen, :)\n");
                         break;
                     }
                     startedBet = false;
@@ -603,151 +586,145 @@ pub fn malloc(req_size: usize) -> ?&u8 {
                 }
 
                 // we've run out. we need more...
-                if (const np ?= allocate_new_page(size)) {
+                if (allocate_new_page(size)) |np| {
                     m.next = np;
                 } else {
                     break;                 // uh oh,  no more memory.....
                 }
-                m.next.prev = m;
-
+                @ptrCast(&liballoc_major, m.next).prev = m;
             }
-            m = m.next;
+            m = @ptrCast(&liballoc_major, m.next);
             maj = m;
-        } else {
-            break;
-        } 
     } // while (maj != null)
 
-    liballoc_unlock();              // release the lock
+    _ = liballoc_unlock();              // release the lock
 
     if (DEBUG) {
-        %%io.stderr.printf("All cases exhausted. No memory available.\n");
+        warn("All cases exhausted. No memory available.\n");
     }
-    if (DEBUG || INFO) {
-        %%io.stdout.printf("liballoc: WARNING: PREFIX(malloc)( X ) returning null.\n");
-        // liballoc_dump();
+    if (DEBUG or INFO) {
+        warn("liballoc: WARNING: PREFIX(malloc)( X ) returning null.\n");
+        //liballoc_dump();
     }
 //#endif
     return null;
 }
 
-pub fn calloc(nobj: usize, size: usize) -> ?&u8 {
+pub fn calloc(nobj: usize, size: usize) ?&u8 {
     var real_size = nobj * size;
     var p = malloc(real_size);
 
-    if (var up ?= p) {
-        liballoc_memset(up, 0, real_size);
+    if (p) |np| {
+        liballoc_memset(np, 0, real_size);
     }
 
     return p;
 }
 
 //void free(void *ptr) {
-pub fn free(fptr: ?&u8) {
-    if (var ptr ?= fptr) {
-        ptr = UNALIGN(ptr);
+pub fn free(fptr: ?&u8) void {
+    if (fptr) |fp| {
+        var ptr = UNALIGN(fp);
 
-        liballoc_lock();                // lockit
+        _ = liballoc_lock();                // lockit
 
-        var min = (&liballoc_minor)(usize(ptr) - @sizeOf(liballoc_minor));
+        var min = @intToPtr(&liballoc_minor, @ptrToInt(ptr) - @sizeOf(liballoc_minor));
 
         if (min.magic != LIBALLOC_MAGIC) {
             l_errorCount += 1;
 
             // Check for overrun errors. For all bytes of LIBALLOC_MAGIC
             if (
-                ((min.magic & 0xFFFFFF) == (LIBALLOC_MAGIC & 0xFFFFFF)) ||
-                ((min.magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) ||
+                ((min.magic & 0xFFFFFF) == (LIBALLOC_MAGIC & 0xFFFFFF)) or
+                ((min.magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) or
                 ((min.magic & 0xFF) == (LIBALLOC_MAGIC & 0xFF))
                 )
             {
                 l_possibleOverruns += 1;
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     // printf( "liballoc: ERROR: Possible 1-3 byte overrun for magic %x != %x\n",
                     //         min.magic,
                     //         LIBALLOC_MAGIC );
-                    %%io.stderr.printf("liballoc: ERROR: Possible 1-3 byte overrun for magic\n");
+                    warn("liballoc: ERROR: Possible 1-3 byte overrun for magic\n");
                 }
             }
 
             if (min.magic == LIBALLOC_DEAD)
             {
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     // printf( "liballoc: ERROR: multiple PREFIX(free)() attempt on %x from %x.\n", 
                     //         ptr,
                     //         __builtin_return_address(0) );
-                    %%io.stderr.printf("liballoc: ERROR: multiple free() attempt\n");
+                    warn("liballoc: ERROR: multiple free() attempt\n");
                 }
             }
             else
             {
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     // printf( "liballoc: ERROR: Bad PREFIX(free)( %x ) called from %x\n",
                     //         ptr,
                     //         __builtin_return_address(0) );
-                    %%io.stderr.printf("liballoc: ERROR: Bad free called from\n");
+                    warn("liballoc: ERROR: Bad free called from\n");
                 }
             }
 
             // being lied to...
-            liballoc_unlock();              // release the lock
+            _ = liballoc_unlock();              // release the lock
             return;
         }
 
         if (DEBUG) {
             //printf( "liballoc: %x PREFIX(free)( %x ): ", __builtin_return_address( 0 ), ptr );
-            %%io.stderr.printf("liballoc: (free) from");
-            %%printNamedHex(" address ", usize(@returnAddress()), io.stderr);
+            warn("liballoc: (free) from address {x}\n", @ptrToInt(@returnAddress()));
         }
 
-        var maj = min.block;
+        if (min.block) |maj| {
+            l_inuse -= min.size;
 
-        l_inuse -= min.size;
+            maj.usage -= (min.size + @sizeOf(liballoc_minor));
+            min.magic  = LIBALLOC_DEAD;            // No mojo.
 
-        maj.usage -= (min.size + @sizeOf(liballoc_minor));
-        min.magic  = LIBALLOC_DEAD;            // No mojo.
+            if (min.next) |minp| {
+                minp.prev = min.prev;
+            }
+            if (min.prev) |minp| {
+                minp.next = min.next;
+            }
 
-        if (usize(min.next) != usize(0)) min.next.prev = min.prev;
-        if (usize(min.prev) != usize(0)) min.prev.next = min.next;
-
-        if (usize(min.prev) == usize(0)) maj.first = min.next;
-        // Might empty the block. This was the first minor.
-
-        // We need to clean up after the majors now....
-        if (usize(maj.first) == usize(0))       // Block completely unused.
-        {
-            if (usize(l_memRoot) == usize(maj)) l_memRoot = maj.next;
-            if (usize(l_bestBet) == usize(maj)) l_bestBet = null;
-            if (usize(maj.prev) != usize(0)) maj.prev.next = maj.next;
-            if (usize(maj.next) != usize(0)) maj.next.prev = maj.prev;
-            l_allocated -= maj.size;
-
-            liballoc_free(maj);
-        } else {
-            if (usize(l_bestBet) != usize(0)) {
-                if (var bb ?= l_bestBet) {
-                    const bestSize = bb.size  - bb.usage;
+            if (min.prev) |minp| {
+                maj.first = minp.next;
+            }
+            // Might empty the block. This was the first minor.
+            // We need to clean up after the majors now....
+            if (maj.first) |mfp| {
+                if (l_bestBet) |bb| {
+                    const bestSize = bb.size - bb.usage;
                     const majSize = maj.size - maj.usage;
                     if (majSize > bestSize) l_bestBet = maj;
                 } else {
-                    %%io.stderr.printf("Error with l_bestBet\n");
+                    warn("Error with l_bestBet\n");
                 }
-
+            } else {
+                if (@ptrToInt(l_memRoot) == @ptrToInt(maj)) l_memRoot = maj.next;
+                if (@ptrToInt(l_bestBet) == @ptrToInt(maj)) l_bestBet = null;
+                if (maj.prev) |mp| { mp.next = maj.next; }
+                if (maj.next) |mp| { mp.prev = maj.prev; }
+                l_allocated -= maj.size;
+                liballoc_free(maj);
             }
         }
 
         if (DEBUG) {
-            %%io.stderr.printf("OK\n");
+            warn("OK\n");
         }
 
-        liballoc_unlock();              // release the lock
+        _ = liballoc_unlock();              // release the lock
     } else {
         l_warningCount += 1;
 
-        if (DEBUG || INFO) {
+        if (DEBUG or INFO) {
             // printf( "liballoc: WARNING: PREFIX(free)( null ) called from %x\n", __builtin_return_address(0));
-            %%io.stderr.printf("liballoc: WARNING: free(null)");
-            %%printNamedHex("return address:", usize(@returnAddress()), io.stderr);
+            warn("liballoc: WARNING: free(null), return address: {x}", @ptrToInt(@returnAddress()));
         }
 
         return;
@@ -757,9 +734,9 @@ pub fn free(fptr: ?&u8) {
 
 // realloc
 //void* realloc(void *p, size_t size) {
-pub fn realloc(pp: ?&u8, size: usize) -> ?&u8 {
+pub fn realloc(pp: ?&u8, size: usize) ?&u8 {
 
-    if (var p ?= pp) {
+    if (pp) |p| {
         // Honour the case of size == 0 => free old and return null
         if (size == 0)
         {
@@ -767,31 +744,28 @@ pub fn realloc(pp: ?&u8, size: usize) -> ?&u8 {
             return null;
         }
 
-        // In the case of a null pointer, return a simple malloc.
-        if (usize(p) == usize(0)) return malloc(size);
-
         // Unalign the pointer if required.
-        var ptr = p;
-        ptr = UNALIGN(ptr);
+        var ptr = UNALIGN(p);
 
-        liballoc_lock();                // lockit
+        _ = liballoc_lock();                // lockit
 
-        var min = (&liballoc_minor)(usize(ptr) - @sizeOf(liballoc_minor));
+        var min = @intToPtr(&liballoc_minor, (@ptrToInt(ptr) - @sizeOf(liballoc_minor)));
 
         // Ensure it is a valid structure.
         if (min.magic != LIBALLOC_MAGIC)
         {
+            warn("bad magic {x}\n", min.magic);
             l_errorCount += 1;
 
             // Check for overrun errors. For all bytes of LIBALLOC_MAGIC
             if (
-                ((min.magic & 0xFFFFFF) == (LIBALLOC_MAGIC & 0xFFFFFF)) ||
-                ((min.magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) ||
+                ((min.magic & 0xFFFFFF) == (LIBALLOC_MAGIC & 0xFFFFFF)) or
+                ((min.magic & 0xFFFF) == (LIBALLOC_MAGIC & 0xFFFF)) or
                 ((min.magic & 0xFF) == (LIBALLOC_MAGIC & 0xFF))
                 )
             {
                 l_possibleOverruns += 1;
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     // printf("liballoc: ERROR: Possible 1-3 byte overrun for magic %x != %x\n",
                     //        min.magic,
                     //        LIBALLOC_MAGIC );
@@ -800,163 +774,195 @@ pub fn realloc(pp: ?&u8, size: usize) -> ?&u8 {
             }
 
             if (min.magic == LIBALLOC_DEAD) {
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     //printf( "liballoc: ERROR: multiple free() attempt on %x from %x.\n",  ptr, __builtin_return_address(0) );
                     //FLUSH();
                 }
             } else {
-                if (DEBUG || INFO) {
+                if (DEBUG or INFO) {
                     //printf( "liballoc: ERROR: Bad PREFIX(free)( %x ) called from %x\n", ptr,  __builtin_return_address(0) );
                     //FLUSH();
                 }
             }
 
             // being lied to...
-            liballoc_unlock();              // release the lock
+            _ = liballoc_unlock();              // release the lock
             return null;
+        } else {
+            warn("relloca -> malloc\n");
+            return malloc(size);
         }
 
+        warn("Definitely a memory block\n");
         // Definitely a memory block.
         var real_size = min.req_size;
 
         if (real_size >= size) {
             min.req_size = size;
-            liballoc_unlock();
+            _ = liballoc_unlock();
             return p;
         }
 
-        liballoc_unlock();
+        _ = liballoc_unlock();
 
         if (DEBUG) {
-            %%io.stderr.printf("reallocating with alloc");
-            %%printNamedHex(" address ", usize(@returnAddress()), io.stderr);
+            warn("reallocating with alloc address {}\n", usize(@returnAddress()));
         }
 
         // If we got here then we're reallocating to a block bigger than us.
         var np = malloc(size);                                   // We need to allocate new memory
-        if (const x ?= np) {
+        if (np) |x| {
             liballoc_memcpy(x, p, real_size);
             free(p);
         }
 
         return np;
     } else {
+        warn("realloc -> malloc (end)\n");
         return malloc(size);
     }
 }
 
 
-fn alignandunalignTest() {
-    @setFnTest(this, true);
+test "liballoc dump test" {
+    try liballoc_dump();
+}
+
+test "align and unalign test" {
     var it = usize(0);
     var tt = usize(0);
-    var buf: [64]u8 = zeroes;
+    var buf: [64]u8 = undefined;
 
-    while (tt < 32; tt += 1) {
+    @memset(&buf[0], 0, 64);
+
+    while (tt < 32) : (tt += 1) {
         var op = &buf[tt];
         // %%io.stdout.printInt(usize, tt);
         // %%io.stdout.writeByte('\n');
-        // %%printNamedHex("-> op (base) = ", usize(op), io.stdout);
+        warn("-> {} op (base) = {x}\n", tt, @ptrToInt(op));
         var p = ALIGN(op);
-        // %%printNamedHex("p (aligned) = ", usize(p), io.stdout);
-        // it = 0;
-        // while (it < buf.len; it += 1) {
-        //     %%io.stdout.printInt(u8, buf[it]);
-        //     %%io.stdout.writeByte('.');
-        // } %%io.stdout.printf("\n");
+        warn("p (aligned) = {x}\n", @ptrToInt(p));
+        //it = 0;
+        //while (it < buf.len) : (it += 1) {
+        //    warn("{}.", buf[it]);
+        //}
+        //warn("\n");
         p = UNALIGN(p);
-        // %%printNamedHex("<- p (unaligned) = ", usize(p), io.stdout);
+        warn("<- {}  p (unaligned) = {x}\n", tt, @ptrToInt(p));
         debug.assert(op == p);
-        buf = zeroes;
+        @memset(&buf[0], 0, 64);
     }
-}
-
-fn dumpTest() {
-    @setFnTest(this, true);
-    %%liballoc_dump();
 }
 
 //#attribute("test")
-fn allocateNewPage() {
-    if (var m ?= allocate_new_page(4096)) {
-        %%printNamedHex("liballoc_major:", usize(m), io.stdout);
-        %%printNamedHex("size:", m.size, io.stdout);
-        %%printNamedHex("pages:", m.pages, io.stdout);
-        %%printNamedHex("usage:", m.usage, io.stdout);
-        %%printNamedHex("next ptr:", usize(m.next), io.stdout);
-        %%printNamedHex("prev ptr:", usize(m.prev), io.stdout);
-        %%printNamedHex("first ptr:", usize(m.first), io.stdout);
-        %%io.stdout.printf("Worked OK\n");
+//test "allocateNewPage" {
+//    if (allocate_new_page(4096)) |m| {
+//        warn("liballoc_major: {x}\n", @ptrToInt(m));
+//        warn("size: {}\n", m.size);
+//        warn("pages: {}\n", m.pages);
+//        warn("usage: {}\n", m.usage);
+//        warn("next ptr: {}\n", @ptrToInt(m.next));
+//        warn("prev ptr: {}\n", @ptrToInt(m.prev));
+//        warn("first ptr: {}\n", @ptrToInt(m.first));
+//        warn("Worked OK\n");
+//        try liballoc_dump();
+//        liballoc_free(m);
+//        try liballoc_dump();
+//    } else {
+//        warn("FAILED\n");
+//    }
+//}
 
-        liballoc_free(m);
-    } else {
-        %%io.stdout.printf("FAILED\n");
-    }
-}
-
-struct TestAllocation {
-    ptr: ?&u8,
-    size: usize,
-    fill: u8,
-}
-
-//#static_eval_enable(false)
-fn mkTA(size: usize, fill: u8) -> TestAllocation {
-    @setFnStaticEval(this, false);
-    TestAllocation {.ptr = (&u8)(usize(0)), .size = size, .fill = fill}
-}
-
-fn testAllocFree() {
-    @setFnTest(this, true);
-    var allocations = []TestAllocation {mkTA(123, 0xaa),
-                                        mkTA(0x4000, 0x11),
-                                        mkTA(0x2000, 0x12)};
-    var it = usize(0);
-    for (allocations) |*a| {
-        a.ptr = malloc(a.size);
-        if (var x ?= a.ptr) {
-            it = 0;
-            while (it < a.size; it += 1) {
-              x[it] = a.fill;
-            }
-        } else {
-            %%io.stdout.printf("malloc failed\n");
-        }
-        %%liballoc_dump();
-    }
-    for (allocations) |a| {
-        if (var x ?= a.ptr) {
-            it = 0;
-            while (it < a.size; it += 1) {
-                debug.assert(x[it] == a.fill);
-            }
-        } else {
-            %%io.stdout.printf("malloc failed\n");
-        }
-    }
-    for (allocations) |a| {
-        if (var x ?= a.ptr) {
-            free(a.ptr);
-            a.ptr = (&u8)(usize(0));
-        } else {
-            %%io.stdout.printf("malloc failed\n");
-        }
-    }
-}
-
-fn testMallocReallocFree() {
-    @setFnTest(this, true);
-    %%liballoc_dump();
+test "test Malloc/Realloc/Free" {
+    //fn testMallocReallocFree() void {
+    try liballoc_dump();
     var m = malloc(4 << 10);
-    %%liballoc_dump();
-    if (var mm ?= m) {
+    try liballoc_dump();
+    if (m) |mm| {
+        warn("Allocated {x}\n", @ptrToInt(mm));
+        warn("reallocating...\n");
         var np = realloc(mm, 2 << 10);
-        if (var nnp ?= np) {
+        warn("reallocated...\n");
+        if (np) |nnp| {
+                warn("Re-Allocated {x}\n", @ptrToInt(nnp));
             free(nnp);
         } else {
             free(mm);
         }
     }
-    %%liballoc_dump();
+    try liballoc_dump();
 }
 
+const TestAllocation = struct {
+    ptr: ?&u8,
+    size: usize,
+    fill: u8,
+};
+
+fn mkTA(size: usize, fill: u8) TestAllocation {
+    return TestAllocation {.ptr = null, .size = size, .fill = fill};
+}
+
+test "testAllocFree" {
+    var allocations = []TestAllocation {mkTA(123, 0xaa),
+                                        mkTA(0x4000, 0xbb),
+                                        mkTA(0x2000, 0xcc),
+                                        mkTA(0x123, 0xdd),
+                                        mkTA(0x124, 0xee),
+                                        mkTA(0x125, 0xff),
+                                        mkTA(0x2, 0x99),
+                                        mkTA(0x6, 0x88),
+                                        mkTA(0x20, 0x77),
+                                        mkTA(0x200, 0x66),
+                                        mkTA(0x2000, 0x55),
+                                        mkTA(0x2000, 0x55),
+                                        mkTA(0x2000, 0x44),
+                                        mkTA(0x2000, 0x33),
+                                        mkTA(0x2000, 0x22),
+                                        mkTA(0x2000, 0x11),
+                                        
+    };
+    var it = usize(0);
+    for (allocations) |*a| {
+        a.ptr = malloc(a.size);
+        if (a.ptr) |x| {
+            it = 0;
+            while (it < a.size) : (it += 1) {
+              x[it] = a.fill;
+            }
+        } else {
+            warn("malloc failed\n");
+        }
+        try liballoc_dump();
+    }
+    for (allocations) |a| {
+        if (a.ptr) |x| {
+            it = 0;
+            while (it < a.size) : (it += 1) {
+                debug.assert(x[it] == a.fill);
+            }
+        } else {
+            warn("malloc failed\n");
+        }
+    }
+    for (allocations) |a| {
+        var ta = @ptrCast(&TestAllocation, &a);
+        if (a.ptr) |x| {
+            free(a.ptr);
+            // cannot assign to constant
+            ta.ptr = null;
+        } else {
+            warn("malloc failed\n");
+        }
+        try liballoc_dump();
+    }
+
+    {
+        var i = usize(0);
+        while (i < 1024) {
+            var p = malloc(1024);
+            i += 1;
+        }
+        try liballoc_dump();
+    }
+}
