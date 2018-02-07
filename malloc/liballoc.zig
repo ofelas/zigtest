@@ -129,40 +129,6 @@ fn liballoc_memcpy(dest: &u8, src: &u8, n: usize) &u8{
     return dest;
 }
 
-// #if defined DEBUG || defined INFO
-// static void liballoc_dump() {
-// #ifdef DEBUG
-//     struct liballoc_major *maj = l_memRoot;
-//     struct liballoc_minor *min = null;
-// #endif
-//     printf( "liballoc: ------ Memory data ---------------\n");
-//     printf( "liballoc: System memory allocated: %i bytes\n", l_allocated );
-//     printf( "liballoc: Memory in used (malloc'ed): %i bytes\n", l_inuse );
-//     printf( "liballoc: Warning count: %i\n", l_warningCount );
-//     printf( "liballoc: Error count: %i\n", l_errorCount );
-//     printf( "liballoc: Possible overruns: %i\n", l_possibleOverruns );
-// #ifdef DEBUG
-//     while ( maj != null )
-//     {
-//         printf( "liballoc: %x: total = %i, used = %i\n",
-//                 maj,
-//                 maj->size,
-//                 maj->usage );
-//         min = maj->first;
-//         while ( min != null )
-//         {
-//             printf( "liballoc:    %x: %i bytes\n",
-//                     min,
-//                     min->size );
-//             min = min->next;
-//         }
-//         maj = maj->next;
-//     }
-// #endif
-//     FLUSH();
-// }
-// #endif
-
 fn liballoc_dump() %void {
     warn("\nliballoc: ------ Memory data ---------------\n");
     warn("liballoc: System memory allocated bytes: {}\n", l_allocated);
@@ -173,17 +139,17 @@ fn liballoc_dump() %void {
     var it = l_memRoot;
     var majidx: usize = 0;
     while (it) |maj| : (it = maj.next) {
-        warn("{} maj ptr  : {x}\n", majidx, @ptrToInt(maj));
-        warn("{} maj fist  : {x}\n", majidx, @ptrToInt(maj.first));
-        warn("{} maj next  : {x}\n", majidx, @ptrToInt(maj.next));
+        warn("{} maj ptr  : {}\n", majidx, maj);
+        warn("{} maj first  : {}\n", majidx, maj.first);
+        warn("{} maj next  : {}\n", majidx, maj.next);
         warn("{} maj size : {}\n", majidx, maj.size);
         warn("{} maj usage: {}\n", majidx, maj.usage);
         var mit = maj.first;
         var i = usize(0);
         while (mit) |min| : (mit = min.next){
-            warn("  {} min ptr  : {x}\n", i, @ptrToInt(min));
+            warn("  {} min ptr  : {}\n", i, min);
             warn("  {} min size : {}\n", i, min.size);
-            warn("  {} min next : {x}\n", i, @ptrToInt(min.next));
+            warn("  {} min next : {}\n", i, min.next);
             i += 1;
         }
         majidx += 1;
@@ -216,12 +182,18 @@ fn liballoc_free(mm: ?&liballoc_major) void {
     }
 }
 
+// We're lock-free , ha, ha
 fn liballoc_lock() usize {
     return 0;
 }
 
 fn liballoc_unlock() usize {
     return 0;
+}
+
+// 
+inline fn cast(comptime T: type, fromv: var) T {
+    return @intToPtr(T, @ptrToInt(fromv));
 }
 
 
@@ -248,7 +220,8 @@ inline fn allocate_new_page(size: usize) ?&liballoc_major {
     }
 
     if (liballoc_alloc(st)) |m| {
-        var maj = @intToPtr(&liballoc_major, @ptrToInt(m));
+        //var maj = @intToPtr(&liballoc_major, @ptrToInt(m));
+        var maj = cast(&liballoc_major, m);
         maj.prev       = null;
         maj.next       = null;
         maj.pages      = st;
@@ -256,6 +229,7 @@ inline fn allocate_new_page(size: usize) ?&liballoc_major {
         maj.usage      = @sizeOf(liballoc_major);
         maj.first      = null;
 
+        // track allocated memory
         l_allocated += maj.size;
 
         if (DEBUG) {
@@ -288,7 +262,7 @@ pub fn malloc(req_size: usize) ?&u8 {
     var size = req_size;
 
     if (DEBUG) {
-        warn("malloc({})\n", req_size);
+        warn( "liballoc: malloc({}) called from {}\n", size, @returnAddress());
     }
 
     // For alignment, we adjust size so there's enough space to align.
@@ -303,7 +277,7 @@ pub fn malloc(req_size: usize) ?&u8 {
     if (size == 0) {
         l_warningCount += 1;
         if (DEBUG or INFO) {
-            warn( "liballoc: WARNING: malloc(0) called from {x}\n",  @ptrToInt(@returnAddress()));
+            warn( "liballoc: WARNING: malloc(0) called from {}\n",  @returnAddress());
         }
         // remember to unlock
         _ = liballoc_unlock();
@@ -321,22 +295,17 @@ pub fn malloc(req_size: usize) ?&u8 {
         // This is the first time we are being used.
         if (allocate_new_page(size)) |newp| {
             if (DEBUG) {
-                warn("liballoc: set up first memory major {x}\n", @ptrToInt(newp));
+                warn("liballoc: set up first memory major {}\n", newp);
             }
             l_memRoot = newp;
-            } else {
+        } else {
             if (DEBUG) {
-                //printf( "liballoc: initial l_memRoot initialization failed\n", p);
                 warn("liballoc: initial l_memRoot initialization failed\n");
             }
 
             _ = liballoc_unlock();
             return null;
         }
-    }
-
-    if (DEBUG) {
-        warn( "liballoc: malloc({}) called from {x}\n", size, @ptrToInt(@returnAddress()));
     }
 
     // Now we need to bounce through every major and find enough space....
@@ -353,18 +322,14 @@ pub fn malloc(req_size: usize) ?&u8 {
         }
     }
 
-    // %%printNamedHex("maj=", usize(maj), io.stderr);
-    // %%printNamedHex("bestSize=", usize(bestSize), io.stderr);
-    // %%printNamedHex("l_memRoot=", usize(l_memRoot), io.stderr);
     if (DEBUG) {
-        warn("maj={x}, bestSize={}, l_memRoot={x}\n",
-             @ptrToInt(maj), bestSize, @ptrToInt(l_memRoot));
+        warn("maj={}, bestSize={}, l_memRoot={}\n", maj, bestSize, l_memRoot);
     }
 
     // we now have a maj but it's a ?&thing and it cannot be null/0
     var diff = usize(0);
     while (maj) |mx| { // this can't be the proper way of doing things
-           var m = @ptrCast(&liballoc_major, mx);
+           var m = cast(&liballoc_major, mx);
            diff  = m.size - m.usage;
             // free memory in the block
             if (bestSize < diff) {
@@ -397,7 +362,8 @@ pub fn malloc(req_size: usize) ?&u8 {
                 if (allocate_new_page(size)) |np| {
                     m.next = np;  // next one will be okay.
                     if (m.next) |mn| { mn.prev = m; }
-                    m = @ptrCast(&liballoc_major, m.next);
+                    m = np;
+                    maj = np;
                 } else {
                     break;        // no more memory.
                 }
@@ -428,7 +394,7 @@ pub fn malloc(req_size: usize) ?&u8 {
 
                 if (DEBUG) {
                     //printf( "CASE 2: returning %x\n", p);
-                    warn("CASE 2: returning (brand new day)\n");
+                    warn("CASE 2: returning {} (brand new day)\n", p);
                     //FLUSH();
                 }
                 _ = liballoc_unlock();              // release the lock
@@ -437,13 +403,8 @@ pub fn malloc(req_size: usize) ?&u8 {
             //#endif USE_CASE2
             //#if (USE_CASE3)
             // CASE 3: Block in use and enough space at the start of the block.
-            diff =  @ptrToInt(m.first);
-            diff -= @ptrToInt(m);
-            diff -= @sizeOf(liballoc_major);
+            diff =  @ptrToInt(m.first) - @ptrToInt(m) - @sizeOf(liballoc_major);
 
-            // %%printNamedHex("x m=", usize(m), io.stdout);
-            // %%printNamedHex("x m.first=", usize(m.first), io.stdout);
-            // %%printNamedHex("x diff=", usize(diff), io.stdout);
             if (diff >= (size + @sizeOf(liballoc_minor))) {
                 // Yes, space in front. Squeeze in.
                 // %%printNamedHex("xx m=", usize(m), io.stdout);
@@ -476,7 +437,7 @@ pub fn malloc(req_size: usize) ?&u8 {
 
                 if (DEBUG) {
                     //printf( "CASE 3: returning %x\n", p);
-                    warn("CASE 3: returning\n");
+                    warn("CASE 3: returning {}\n", p);
                 }
                 _ = liballoc_unlock();              // release the lock
                 return p;
@@ -516,8 +477,7 @@ pub fn malloc(req_size: usize) ?&u8 {
 
                         if (DEBUG) {
                             // printf( "CASE 4.1: returning %x\n", p);
-                            warn("CASE 4.1: End of minors in a block returning {x}\n",
-                                 @ptrToInt(p));
+                            warn("CASE 4.1: End of minors in a block returning {}\n", p);
                         }
                         _ = liballoc_unlock();              // release the lock
                         return p;
@@ -556,7 +516,7 @@ pub fn malloc(req_size: usize) ?&u8 {
 
                         if (DEBUG) {
                             //printf( "CASE 4.2: returning %x\n", p);
-                            warn("CASE 4.2: Is there space between two minors returning\n");
+                            warn("CASE 4.2: Is there space between two minors returning {}\n", p);
                         }
 
                         _ = liballoc_unlock();              // release the lock
@@ -601,12 +561,9 @@ pub fn malloc(req_size: usize) ?&u8 {
 
     if (DEBUG) {
         warn("All cases exhausted. No memory available.\n");
-    }
-    if (DEBUG or INFO) {
-        warn("liballoc: WARNING: PREFIX(malloc)( X ) returning null.\n");
+        warn("liballoc: WARNING: malloc ({}) returning null (called from {}).\n", size, @returnAddress());
         //liballoc_dump();
     }
-//#endif
     return null;
 }
 
@@ -674,8 +631,7 @@ pub fn free(fptr: ?&u8) void {
         }
 
         if (DEBUG) {
-            //printf( "liballoc: %x PREFIX(free)( %x ): ", __builtin_return_address( 0 ), ptr );
-            warn("liballoc: (free) from address {x}\n", @ptrToInt(@returnAddress()));
+            warn("liballoc: (free) from address {}\n", @returnAddress());
         }
 
         if (min.block) |maj| {
@@ -724,7 +680,7 @@ pub fn free(fptr: ?&u8) void {
 
         if (DEBUG or INFO) {
             // printf( "liballoc: WARNING: PREFIX(free)( null ) called from %x\n", __builtin_return_address(0));
-            warn("liballoc: WARNING: free(null), return address: {x}", @ptrToInt(@returnAddress()));
+            warn("liballoc: WARNING: free(null), return address: {}", @returnAddress());
         }
 
         return;
@@ -806,7 +762,7 @@ pub fn realloc(pp: ?&u8, size: usize) ?&u8 {
         _ = liballoc_unlock();
 
         if (DEBUG) {
-            warn("reallocating with alloc address {}\n", usize(@returnAddress()));
+            warn("reallocating with alloc address {}\n", @returnAddress());
         }
 
         // If we got here then we're reallocating to a block bigger than us.
@@ -839,16 +795,16 @@ test "align and unalign test" {
         var op = &buf[tt];
         // %%io.stdout.printInt(usize, tt);
         // %%io.stdout.writeByte('\n');
-        warn("-> {} op (base) = {x}\n", tt, @ptrToInt(op));
+        warn("-> {} op (base) = {}\n", tt, op);
         var p = ALIGN(op);
-        warn("p (aligned) = {x}\n", @ptrToInt(p));
+        warn("p (aligned) = {}\n", p);
         //it = 0;
         //while (it < buf.len) : (it += 1) {
         //    warn("{}.", buf[it]);
         //}
         //warn("\n");
         p = UNALIGN(p);
-        warn("<- {}  p (unaligned) = {x}\n", tt, @ptrToInt(p));
+        warn("<- {}  p (unaligned) = {}\n", tt, p);
         debug.assert(op == p);
         @memset(&buf[0], 0, 64);
     }
@@ -879,12 +835,12 @@ test "test Malloc/Realloc/Free" {
     var m = malloc(4 << 10);
     try liballoc_dump();
     if (m) |mm| {
-        warn("Allocated {x}\n", @ptrToInt(mm));
+        warn("Allocated {}\n", mm);
         warn("reallocating...\n");
         var np = realloc(mm, 2 << 10);
         warn("reallocated...\n");
         if (np) |nnp| {
-                warn("Re-Allocated {x}\n", @ptrToInt(nnp));
+                warn("Re-Allocated {}\n", nnp);
             free(nnp);
         } else {
             free(mm);
@@ -958,10 +914,13 @@ test "testAllocFree" {
     }
 
     {
-        var i = usize(0);
-        while (i < 1024) {
-            var p = malloc(1024);
-            i += 1;
+        var i = usize(2048);
+        var pp = malloc(i);
+        while (i > 0) {
+            var p = malloc(i);
+            free(pp);
+            i -= 1;
+            pp = p;
         }
         try liballoc_dump();
     }
