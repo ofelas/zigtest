@@ -11,14 +11,16 @@
 //
 
 //#define white_space(c) ((c) == ' ' || (c) == '\t')
-inline fn white_space(c: u8) -> bool { c == ' ' or c == '\t' }
+inline fn white_space(c: u8) bool { return c == ' ' or c == '\t'; }
 
 //#define valid_digit(c) ((c) >= '0' || (c) <= '9')
-inline fn valid_digit(c: u8) -> bool { (c >= '0' and c <= '9') }
+inline fn valid_digit(c: u8) bool { return '0' <= c and c <= '9'; }
 
-error BadFloatString;
+pub const FpConvError = error {
+    BadFloatString,
+};
 
-pub fn zatod(p: []const u8) -> %f64 {
+pub fn zatod(p: []const u8) !f64 {
     var frac: i32 = 0;
     var sign: f64 = 1.0;
     var value: f64 = 0.0;
@@ -28,7 +30,8 @@ pub fn zatod(p: []const u8) -> %f64 {
 
     // Skip leading white space, if any.
     while ((idx < end) and white_space(p[idx])) : (idx += 1) {}
-    if ((idx == end) or (p[idx] == 0)) return value; // or possibly an error
+    // If there is nothing left we have an error
+    if ((idx == end) or (p[idx] == 0)) return FpConvError.BadFloatString;
 
     // Get sign, if any.
     if (p[idx] == '-') {
@@ -71,10 +74,10 @@ pub fn zatod(p: []const u8) -> %f64 {
 
                 // Get digits of exponent, if any.
                 while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
-                    expon = expon * 10 + @typeOf(expon)(p[idx] - '0');
+                    expon = (expon * 10) + @typeOf(expon)(p[idx] - '0');
                 }
             }
-            if (expon > 308) expon = 308;
+            //if (expon > 308) expon = 308;
 
             // Calculate scaling factor.
             while (expon >= 50) { scale *= 1E50; expon -= 50; }
@@ -83,6 +86,11 @@ pub fn zatod(p: []const u8) -> %f64 {
         }
     }
 
-    // Return signed and scaled floating point result.
-    return sign * if (frac == 1) (value / scale) else (value * scale);
+    // We should have consumed everything
+    if (idx != end) {
+        return FpConvError.BadFloatString;
+    } else {
+        // Return signed and scaled floating point result.
+        return sign * if (frac == 1) (value / scale) else (value * scale);
+    }
 }
