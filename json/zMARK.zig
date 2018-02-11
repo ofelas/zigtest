@@ -21,8 +21,11 @@ const parseInt = std.fmt.parseInt;
 const fpconv_dtoa = @import("../fpconv/zfpconv.zig").zfpconv_dtoa;
 const atod = @import("../fpconv/zfast_atof.zig").zatod;
 
+var localmemory: [16 << 20]u8 = undefined;
+var fballoc = std.mem.FixedBufferAllocator.init(localmemory[0..]);
+
 /// There may be a simpler way...
-var stdout_file: io.File = undefined;
+var stdout_file: std.os.File = undefined;
 var stdout_file_out_stream: io.FileOutStream = undefined;
 var stdout_stream: ?&io.OutStream(io.FileOutStream.Error) = null;
 
@@ -49,6 +52,10 @@ fn printDouble(d: f64, stream: io.OutStream) !void {
     !stream.write(buf[0 .. sz]);
 }
 
+fn formatDouble(d: f64, buf: &[24]u8) void {
+    var sz = fpconv_dtoa(d, buf);
+}
+
 pub const JsonError = error {
     WouldBlock,
 };
@@ -70,7 +77,8 @@ const ParseBuffer = struct {
     }
 
     inline fn canAccessAtIndex(pb: &Self, index: usize) bool {
-        return (pb.offset + index) < pb.content.len;
+        const nextOffset = pb.offset +% index;
+        return (nextOffset >= pb.offset) and (nextOffset < pb.content.len);
     }
 
     inline fn charAtOffset(pb: &Self) u8 {
@@ -277,6 +285,11 @@ fn parseArray(pb: &ParseBuffer) bool {
                 var i: usize = 0;
                 while (keepgoing) {
                     pb.skipWhitespace();
+                    if (pb.charAtOffset() == ']') {
+                        // this should cover trailing comma at end of list/array
+                        result = true;
+                        break;
+                    }
                     result = parseValue(pb);
                     pb.skipWhitespace();
                     if (result == true and pb.advanceIfLookingAt(',') == true) {
@@ -327,6 +340,10 @@ fn parseObject(pb: &ParseBuffer) bool {
                 var keepgoing = true;
                 while (keepgoing) {
                     pb.skipWhitespace();
+                    if (pb.charAtOffset() == '}') {
+                        // this should cover trailing comma at end of object
+                        break;
+                    }
                     result = parseString(pb);
                     if (result == false) {
                         break;
@@ -471,7 +488,7 @@ pub fn main() !void {
     _ = try getStdOutStream();
     while (args.nextPosix()) |arg| {
         print("arg[{}] = '{}'\n", i, arg);
-        var file = try io.File.openRead(allocator, arg);
+        var file = try std.os.File.openRead(allocator, arg);
         defer file.close();
         const file_size = try file.getEndPos();
         var file_in_stream = io.FileInStream.init(&file);
@@ -479,8 +496,8 @@ pub fn main() !void {
         print("{} bytes\n", file_size);
         //var buf_stream = io.BufferedInStream.init(&file_in_stream.stream);
         const st = &buf_stream.stream;
-        const contents = try st.readAllAlloc(allocator, file_size + 1);
-        defer allocator.free(contents);
+        const contents = try st.readAllAlloc(&fballoc.allocator, file_size + 1);
+        defer fballoc.allocator.free(contents);
         const rv = parseJson(contents);
         i += 1;
     }
