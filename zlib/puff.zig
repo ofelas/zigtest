@@ -886,7 +886,6 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
 
 test "puff function" {
     var dest = []u8 {0} ** 8192;
-    var destlen = dest.len;
     const ZTEST = struct { input: []const u8, output: []const u8 };
     const pufftests = []ZTEST {
         ZTEST {.input = "KL$\t\x00\x00\xab\xa6\x11\xd0",
@@ -898,27 +897,17 @@ test "puff function" {
         ZTEST {.input = "30426153\xb7\xb04\x80\xb3\x00*\x80\x04\x1b",
                .output = "01234567890123456789" },
     };
-    // Created with python zlib.compress() and initial byte(s) dropped
-    //const s = "|One dead duck was wet and stuck. There it was out of luck|";
-    //var input = "\xab\xf1\xcfKUHIMLQH)M\xceV(O,V(O-QH\xccKQ(.\x01\x8a\xe8)\x84d\xa4\x16\xa5*d\x96\x80\xe5\xf2KK\x14\xf2\xd3\x14r\x8025\x00p\x1a\x14\xf2";
-    const s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    var input = "KL$\t\x00\x00\xab\xa6\x11\xd0";
-    var sourcelen = input.len;
 
     for (pufftests) |t| {
         // clear dest
         for (dest) |*d| {
             d.* = 0;
         }
-        destlen = dest.len;
-        sourcelen = t.input.len;
+        var destlen = dest.len;
+        var sourcelen = t.input.len;
         const ret = try puff(dest[0..], &destlen, t.input[0..], &sourcelen);
         warn("{} bytes, '{}', consumed={}, ret={}\n", destlen, dest, sourcelen, ret);
         assert(destlen == t.output.len);
         //assert(sourcelen == t.input.len);
     }
-
-    //           "|One dead duck was wet and stuck. There it was out of luck|"
-    // 59 bytes, '|One dead duck was wet and stduc. There itk wasout of lduc|'
-    //                                         ^            ^    ^       ^
 }
