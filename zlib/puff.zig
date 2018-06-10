@@ -30,10 +30,13 @@ const assert = @import("std").debug.assert;
  // *
  // *    http://www.zlib.org/rfc-deflate.html
 
-//#include <setjmp.h>             /* for setjmp(), longjmp(), and jmp_buf */
-//#include "puff.h"               /* prototype for puff() */
-
-//#define local static            /* for local function definitions */
+const PuffError = error {
+    OutOfInput,
+    NotEnoughInput,
+    OutOfCodes,
+    InvalidSymbol,
+    IncompleteCode,
+};
 
 // * Maximums for allocations and loops.  It is not useful to change these --
 // * they are fixed by the deflate format.
@@ -63,119 +66,145 @@ const state = struct {
 
     //* input limit error return state for bits() and decode() */
     // jmp_buf env;
-};
 
-const PuffError = error {
-    OutOfInput,
-    NotEnoughInput,
-    OutOfCodes,
-    InvalidSymbol,
-    IncompleteCode,
-};
-
-// Return need bits from the input stream.  This always leaves less than
-// eight bits in the buffer.  bits() works properly for need == 0.
-//
-// Format notes:
-//
-// - Bits are stored in bytes from the least significant bit to the most
-//   significant bit.  Therefore bits are dropped from the bottom of the bit
-//   buffer, using shift right, and new bytes are appended to the top of the
-//   bit buffer, using shift left.
-fn bits(s: *state, need: u5) !u32 {
-    //var val: u32 = 0;       // bit accumulator (can use up to 20 bits)
-
-    // load at least need bits into val
-    var val: u32 = s.*.bitbuf;
-    //warn("val=0x{x08}, need={}, bitcnt={}, bitbuf={x02}\n", val, need, s.*.bitcnt, s.*.bitbuf);
-    while (s.*.bitcnt < need) {
-        if (s.*.incnt == s.*.inlen) {
-            //longjmp(s.env, 1);         // out of input
-            return error.OufOfInput;
+    // Return need bits from the input stream.  This always leaves less than
+    // eight bits in the buffer.  bits() works properly for need == 0.
+    //
+    // Format notes:
+    //
+    // - Bits are stored in bytes from the least significant bit to the most
+    //   significant bit.  Therefore bits are dropped from the bottom of the bit
+    //   buffer, using shift right, and new bytes are appended to the top of the
+    //   bit buffer, using shift left.
+    fn bits(s: *state, need: u5) !u32 {
+        assert(need <= 20);
+        // load at least need bits into val
+        var val: u32 = s.*.bitbuf; // bit accumulator (can use up to 20 bits)
+        while (s.*.bitcnt < need) {
+            if (s.*.incnt == s.*.inlen) {
+                //longjmp(s.env, 1);         // out of input
+                return error.OufOfInput;
+            }
+            val |= u32(s.inbuf[s.*.incnt]) << s.*.bitcnt;
+            s.*.incnt += 1;
+            s.*.bitcnt += 8;
         }
-        //warn("buf[{}]{x02}\n", s.*.incnt, s.inbuf[s.*.incnt]);
-        val |= u32(s.inbuf[s.*.incnt]);
-        if (s.*.bitcnt > 0) {
-            val <<= s.*.bitcnt;  // load eight bits
-        }
-        s.*.incnt += 1;
-        s.*.bitcnt += 8;
+
+        // drop need bits and update buffer, always zero to seven bits left
+        s.bitbuf = (val >> need);
+        s.bitcnt -= need;
+
+        // return need bits, zeroing the bits above that
+        return u32(val & ((u32(1) << need) - 1));
     }
 
-    // drop need bits and update buffer, always zero to seven bits left
-    s.bitbuf = (val >> need);
-    s.bitcnt -= need;
+    // Decode a code from the stream s using huffman table h.  Return the symbol or
+    // a negative value if there is an error.  If all of the lengths are zero, i.e.
+    // an empty code, or if the code is incomplete and an invalid code is received,
+    // then -10 is returned after reading MAXBITS bits.
+    //
+    // Format notes:
+    //
+    // - The codes as stored in the compressed data are bit-reversed relative to
+    //   a simple integer ordering of codes of the same lengths.  Hence below the
+    //   bits are pulled from the compressed data one at a time and used to
+    //   build the code value reversed from what is in the stream in order to
+    //   permit simple integer comparisons for decoding.  A table-based decoding
+    //   scheme (as used in zlib) does not need to do this reversal.
+    //
+    // - The first code for the shortest length is all zeros.  Subsequent codes of
+    //   the same length are simply integer increments of the previous code.  When
+    //   moving up a length, a zero bit is appended to the code.  For a complete
+    //   code, the last code of the longest length will be all ones.
+    //
+    // - Incomplete codes are handled by this decoder, since they are permitted
+    //   in the deflate format.  See the format notes for fixed() and dynamic().
+    fn decode(s: *state, h: *huffman) !u32 {
+        var len: u32 = 0;            // current number of bits in code
+        var code: u32 = 0;           // len bits being decoded
+        var first: i32 = 0;          // first code of length len
+        var index: u32 = 0;          // index of first code of length len in symbol table
 
-    // return need bits, zeroing the bits above that
-    //warn("val=0x{x08}, need={}\n", val, need);
-    val = u32(val & ((u32(1) << need) - 1));
-    //warn("val=0x{x08}, need={}\n", val, need);
+        len = 1;
+        while (len <= MAXBITS) {
+            code |= try s.bits(1);  // get next bit
+            const count = i32(h.*.count[len]); // number of codes of length len
+            if ((i32(code) - count) < first) {      // if length len, return symbol
+                //warn("code={x}, count={}, {}, first={}, len={}\n", code, count, i32(code) - count, first, len);
+                return u32((h.*.symbol)[index + (code - u32(first))]);
+            }
+            index += u32(count);                 // else update for next length
+            first += count;
+            first <<= 1;
+            code <<= 1;
+            len += 1;
+        }
 
-    //warn("val=0x{x08}, need={}, bitcnt={}, bitbuf={x02}\n", val, need, s.*.bitcnt, s.*.bitbuf);
-    return val;
-}
-
-// Process a stored block.
-//
-// Format notes:
-//
-// - After the two-bit stored block blktype (00), the stored block length and
-//   stored bytes are byte-aligned for fast copying.  Therefore any leftover
-//   bits in the byte that has the last bit of the blktype, as many as seven, are
-//   discarded.  The value of the discarded bits are not defined and should not
-//   be checked against any expectation.
-//
-// - The second inverted copy of the stored block length does not have to be
-//   checked, but it's probably a good idea to do so anyway.
-//
-// - A stored block can have zero length.  This is sometimes used to byte-align
-//   subsets of the compressed data for random access or partial recovery.
-fn stored(s: *state) !u32 {
-    var len: usize = 0;       // length of stored block
-
-    // discard leftover bits from current byte (assumes s->bitcnt < 8)
-    s.bitbuf = 0;
-    s.bitcnt = 0;
-
-    // get length and check against its one's complement
-    if ((s.incnt + 4) > s.inlen) {
-        return error.NotEnoughInput; // not enough input
+    return error.OutOfCodes;    // ran out of codes
     }
-    len = s.inbuf[s.incnt];
-    s.incnt += 1;
-    len |= usize(s.inbuf[s.incnt]) << 8;
-    s.incnt += 1;
-    if (s.inbuf[s.incnt] != (~len & 0xff)) {
+
+    // Process a stored block.
+    //
+    // Format notes:
+    //
+    // - After the two-bit stored block blktype (00), the stored block length and
+    //   stored bytes are byte-aligned for fast copying.  Therefore any leftover
+    //   bits in the byte that has the last bit of the blktype, as many as seven, are
+    //   discarded.  The value of the discarded bits are not defined and should not
+    //   be checked against any expectation.
+    //
+    // - The second inverted copy of the stored block length does not have to be
+    //   checked, but it's probably a good idea to do so anyway.
+    //
+    // - A stored block can have zero length.  This is sometimes used to byte-align
+    //   subsets of the compressed data for random access or partial recovery.
+    fn stored(s: *state) !u32 {
+        var len: usize = 0;       // length of stored block
+        
+        // discard leftover bits from current byte (assumes s->bitcnt < 8)
+        s.bitbuf = 0;
+        s.bitcnt = 0;
+
+        // get length and check against its one's complement
+        if ((s.incnt + 4) > s.inlen) {
+            return error.NotEnoughInput; // not enough input
+        }
+        len = s.inbuf[s.incnt];
         s.incnt += 1;
-        if (s.inbuf[s.incnt] != ((~len >> 8) & 0xff)) {
-            s.incnt += 1;
-            return error.ComplementMismatch;                              // didn't match complement!
+        len |= usize(s.inbuf[s.incnt]) << 8;
+        s.incnt += 1;
+        if (s.inbuf[s.incnt] != (~len & 0xff)) {
+            if (s.inbuf[s.incnt + 1] != ((~len >> 8) & 0xff)) {
+                s.incnt += 2;
+                return error.ComplementMismatch;                              // didn't match complement!
+            }
         }
-    }
-    s.incnt += 2;               // compensate for s.incnt++ int if statements above
+        s.incnt += 2;               // compensate for s.incnt++ int if statements above
 
-    // copy len bytes from in to out
-    if ((s.incnt + len) > s.inlen) {
-        return 2;                               // not enough input
-    }
-    if (s.outbuf.len == 0) {
-        if ((s.outcnt + len) > s.outlen) {
-            return 1;                           // not enough output space
+        // copy len bytes from in to out
+        if ((s.incnt + len) > s.inlen) {
+            return error.NotEnoughInput; // not enough input
         }
-        while (len > 0) {
-            s.outbuf[s.outcnt] = s.inbuf[s.incnt];
-            s.outcnt += 1;
-            s.incnt += 1;
-            len -= 1;
+        if (s.outbuf.len == 0) {
+            if ((s.outcnt + len) > s.outlen) {
+                return 1;       // not enough output space
+            }
+            while (len > 0) {
+                s.outbuf[s.outcnt] = s.inbuf[s.incnt];
+                s.outcnt += 1;
+                s.incnt += 1;
+                len -= 1;
+            }
+        } else {                // just scanning
+            s.outcnt += len;
+            s.incnt += len;
         }
-    } else {                                      // just scanning
-        s.outcnt += len;
-        s.incnt += len;
-    }
 
     //* done with a valid stored block */
     return 0;
 }
+
+};
 
 // Huffman code decoding tables.  count[1..MAXBITS] is the number of symbols of
 // each length, which for a canonical code are stepped through in order.
@@ -187,63 +216,12 @@ const huffman = struct {
     symbol: [*]u16,      // canonically ordered symbols
 };
 
-// Decode a code from the stream s using huffman table h.  Return the symbol or
-// a negative value if there is an error.  If all of the lengths are zero, i.e.
-// an empty code, or if the code is incomplete and an invalid code is received,
-// then -10 is returned after reading MAXBITS bits.
-//
-// Format notes:
-//
-// - The codes as stored in the compressed data are bit-reversed relative to
-//   a simple integer ordering of codes of the same lengths.  Hence below the
-//   bits are pulled from the compressed data one at a time and used to
-//   build the code value reversed from what is in the stream in order to
-//   permit simple integer comparisons for decoding.  A table-based decoding
-//   scheme (as used in zlib) does not need to do this reversal.
-//
-// - The first code for the shortest length is all zeros.  Subsequent codes of
-//   the same length are simply integer increments of the previous code.  When
-//   moving up a length, a zero bit is appended to the code.  For a complete
-//   code, the last code of the longest length will be all ones.
-//
-// - Incomplete codes are handled by this decoder, since they are permitted
-//   in the deflate format.  See the format notes for fixed() and dynamic().
-
-// first we'll try to get it to work with the slow variant...
-//#ifdef SLOW
-fn decode(s: *state, h: *huffman) !u32 {
-    var len: u32 = 0;            // current number of bits in code
-    var code: u32 = 0;           // len bits being decoded
-    var first: u32 = 0;          // first code of length len
-    var count: u32 = 0;          // number of codes of length len
-    var index: u32 = 0;          // index of first code of length len in symbol table
-
-    //code = first = index = 0;
-    len = 1;
-    while (len <= MAXBITS) {
-        code |= try bits(s, 1);             // get next bit
-        count = h.*.count[len];
-        //warn("code={x08}, count={}, first={}\n", code, count, first);
-        if ((i32(code) - i32(count)) < i32(first)) {      // if length len, return symbol
-            return u32((h.*.symbol)[index + (code - first)]);
-        }
-        index += count;                 // else update for next length
-        first += count;
-        first <<= 1;
-        code <<= 1;
-        len += 1;
-    }
-
-    return error.OutOfCodes;                         // ran out of codes
-}
 
 
-// NOTE: leaving this for later
-//  * A faster version of decode() for real applications of this code.   It's not
-//  * as readable, but it makes puff() twice as fast.  And it only makes the code
-//  * a few percent larger.
-// #else /* !SLOW */
-// local int decode(struct state *s, const struct huffman *h)
+// A faster version of decode() for real applications of this code.   It's not
+// as readable, but it makes puff() twice as fast.  And it only makes the code
+// a few percent larger.
+fn fdecode(s: *state, h: *huffman) !u32 {
 // {
 //     int len;            /* current number of bits in code */
 //     int code;           /* len bits being decoded */
@@ -254,39 +232,47 @@ fn decode(s: *state, h: *huffman) !u32 {
 //     int left;           /* bits left in next or left to process */
 //     short *next;        /* next number of codes */
 
-//     bitbuf = s->bitbuf;
-//     left = s->bitcnt;
-//     code = first = index = 0;
-//     len = 1;
-//     next = h->count + 1;
-//     while (1) {
-//         while (left--) {
-//             code |= bitbuf & 1;
-//             bitbuf >>= 1;
-//             count = *next++;
-//             if (code - count < first) { /* if length len, return symbol */
-//                 s->bitbuf = bitbuf;
-//                 s->bitcnt = (s->bitcnt - len) & 7;
-//                 return h->symbol[index + (code - first)];
-//             }
-//             index += count;             /* else update for next length */
-//             first += count;
-//             first <<= 1;
-//             code <<= 1;
-//             len++;
-//         }
-//         left = (MAXBITS+1) - len;
-//         if (left == 0)
-//             break;
-//         if (s->incnt == s->inlen)
-//             longjmp(s->env, 1);         /* out of input */
-//         bitbuf = s->in[s->incnt++];
-//         if (left > 8)
-//             left = 8;
-//     }
-//     return -10;                         /* ran out of codes */
-// }
-// #endif /* SLOW */
+    var bitbuf = s.*.bitbuf;
+    var left = s.*.bitcnt;
+    var code: u32 = 0;
+    var first: u32 = 0;
+    var index: u32 = 0;
+    var len: u32 = 1;
+    var next: u32 = 1; // h.*.count[1];
+    while (true) {
+        while (left > 0) {
+            code |= bitbuf & 1;
+            bitbuf >>= 1;
+            const count = h.*.count[next];
+            next += 1;
+            if (code - count < first) { // if length len, return symbol 
+                s.*.bitbuf = bitbuf;
+                s.*.bitcnt = u5(s.*.bitcnt - len) & 7;
+                return u32(h.*.symbol[index + (code - first)]);
+            }
+            index += count;             // else update for next length
+            first += count;
+            first <<= 1;
+            code <<= 1;
+            len += 1;
+            left -= 1;
+        }
+        left = u5(MAXBITS+1) - u5(len);
+        if (left == 0) {
+            break;
+        }
+        if (s.*.incnt == s.*.inlen) {
+            //             longjmp(s->env, 1);         /* out of input */
+            return error.OutOfInput;
+        }
+        bitbuf = s.*.inbuf[s.incnt];
+        s.incnt += 1;
+         if (left > 8) {
+             left = 8;
+         }
+    }
+    return error.OutOfCodes;    // ran out of codes
+}
 
 // Given the list of code lengths length[0..n-1] representing a canonical
 // Huffman code for n symbols, construct the tables required to decode those
@@ -369,6 +355,7 @@ fn construct(h: *huffman, length: []u16, n: usize) !u32 {
         symbol += 1;
     }
     // return zero for complete set, positive for incomplete set
+    // warn("{} codes left\n", left);
     return u32(left);
 }
 
@@ -447,18 +434,13 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
 
     // decode literals and length/distance pairs
     while (true) {
-        // warn("calling decode\n");
-        symbol = try decode(s, plencode);
-        warn("symbol={}\n", symbol);
-        if (symbol < 0) {
-            return error.InvalidSymbol;              // invalid symbol
-        }
+        symbol = try s.decode(plencode);
         if (symbol < 256) {             // literal: symbol is the byte
-            warn("literal {x}\n", symbol);
+            //warn("literal symbol {x}\n", symbol);
             // write out the literal
             if (s.*.outbuf.len != 0) {
                 if (s.*.outcnt == s.*.outlen) {
-                    return 1;
+                    return error.OutputFull;
                 }
                 s.*.outbuf[s.*.outcnt] = u8(symbol);
             }
@@ -472,28 +454,26 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
                 return error.InvalidFixedCode; // invalid fixed code
             }
             len = lens[symbol];
-            len += try bits(s, lext[u5(symbol)]);
+            len += try s.bits(lext[u5(symbol)]);
 
             // get and check distance
-            symbol = try decode(s, pdistcode);
-            warn("symbol={}\n", symbol);
+            symbol = try s.decode(pdistcode);
+            //warn("symbol={}\n", symbol);
             // symbol cannot be < 0 here, we use u32...
             if (symbol < 0) {
                 return error.InvalidSymbol; // invalid symbol
             }
             distance = dists[symbol];
-            distance += try bits(s, dext[u5(symbol)]);
-            // TODO: debug, seems our distance is not right
-            warn("sy={}, symbol={}, len={}, distance={}\n", sy, symbol, len, distance);
-// #ifndef INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR
-//             if (distance > s->outcnt)
-//                 return -11;     /* distance too far back */
-// #endif
+            distance += try s.bits(dext[u5(symbol)]);
+            //warn("sy={}, symbol={}, len={}, distance={}\n", sy, symbol, len, distance);
+            if (distance > s.*.outcnt) {
+                 return error.DistanceTooFarBack;
+            }
 
             // copy length bytes from distance bytes back
-            if (s.*.outbuf.len != 0) {
+            if (s.*.outbuf.len > 0) {
                 if ((s.*.outcnt + len) > s.*.outlen) {
-                    return 1;
+                    return error.OutputFull;
                 }
                 while (len > 0) {
                     s.*.outbuf[s.*.outcnt] = s.*.outbuf[s.*.outcnt - distance];
@@ -707,7 +687,7 @@ fn dynamic(s: *state) !u32 {
     var ddistsym: [MAXDCODES]u16 = undefined;       
     var dlencode: huffman = undefined;   // length and distance codes
     var ddistcode: huffman = undefined;
-    var order = [19]u16 // permutation of code length codes
+    var order = [19] u16 // permutation of code length codes
     {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
     warn("dynamic\n");
@@ -718,9 +698,9 @@ fn dynamic(s: *state) !u32 {
     ddistcode.symbol = &ddistsym;
 
     // get number of lengths in each table, check lengths
-    nlen = 257 +  try bits(s, 5);
-    ndist = 1 + try bits(s, 5);
-    ncode = 4 + try bits(s, 4);
+    nlen = 257 + try s.bits(5);
+    ndist = 1 + try s.bits(5);
+    ncode = 4 + try s.bits(4);
     if ((nlen > MAXLCODES) or (ndist > MAXDCODES)) {
         return error.BadCounts;                      // bad counts
     }
@@ -728,7 +708,7 @@ fn dynamic(s: *state) !u32 {
     // read code length code lengths (really), missing lengths are zero
     index = 0;
     while (index < ncode) {
-        lengths[order[index]] = u16(try bits(s, 3));
+        lengths[order[index]] = u16(try s.bits(3));
         index += 1;
     }
     while (index < 19) {
@@ -748,7 +728,7 @@ fn dynamic(s: *state) !u32 {
         var symbol: u32 = 0;             // decoded value
         var len: u32 = 0;                // last length to repeat
 
-        symbol = try decode(s, &dlencode);
+        symbol = try s.decode(&dlencode);
         if (symbol < 0) {
             return symbol;          // invalid symbol
         }
@@ -762,11 +742,11 @@ fn dynamic(s: *state) !u32 {
                     return error.NoLastLength;          // no last length!
                 }
                 len = lengths[index - 1];       // last length
-                symbol = 3 + try bits(s, 2);
+                symbol = 3 + try s.bits(2);
             } else if (symbol == 17) {     // repeat zero 3..10 times
-                symbol = 3 + try bits(s, 3);
+                symbol = 3 + try s.bits(3);
             } else {                        // == 18, repeat zero 11..138 times
-                symbol = 11 + try bits(s, 7);
+                symbol = 11 + try s.bits(7);
             }
             if (index + symbol > nlen + ndist) {
                 return error.TooManyLength;              // too many lengths!
@@ -871,12 +851,12 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
     {
         // process blocks until last block or error
         while (true) {
-            last = try bits(&s, 1);    // one if last block
-            blktype = try bits(&s, 2); // block blktype 0..3
-            warn("*** last={x}, blktype={x}, bitcnt={}, bitbuf={x}, outlen={}, outcnt={}\n", last, blktype, s.bitcnt, s.bitbuf, s.outlen, s.outcnt);
+            last = try s.bits(1);    // one if last block
+            blktype = try s.bits(2); // block blktype 0..3
+            //warn("*** last={x}, blktype={x}, bitcnt={}, bitbuf={x}, outlen={}, outcnt={}\n", last, blktype, s.bitcnt, s.bitbuf, s.outlen, s.outcnt);
             //err = blktype == 0 ? stored(&s) : (blktype == 1 ? fixed(&s) : (blktype == 2 ? dynamic(&s) : -1));       // blktype == 3, invalid
             if (blktype == 0) {
-                err = try stored(&s);
+                err = try s.stored();
             } else if (blktype == 1) {
                 try fixed(&s);
             } else if (blktype == 2) {
@@ -913,6 +893,10 @@ test "puff function" {
                .output = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
         ZTEST {.input = "\xab\xf1\xcfKUHIMLQH)M\xceV(O,V(O-QH\xccKQ(.\x01\x8a\xe8)\x84d\xa4\x16\xa5*d\x96\x80\xe5\xf2KK\x14\xf2\xd3\x14r\x8025\x00p\x1a\x14\xf2",
                .output = "|One dead duck was wet and stuck. There it was out of luck|"},
+        ZTEST {.input = "KLJ$\x1d\x02\x00!H\x140",
+               .output = "ababababababababababababababababababababababababababa"},
+        ZTEST {.input = "30426153\xb7\xb04\x80\xb3\x00*\x80\x04\x1b",
+               .output = "01234567890123456789" },
     };
     // Created with python zlib.compress() and initial byte(s) dropped
     //const s = "|One dead duck was wet and stuck. There it was out of luck|";
@@ -922,11 +906,16 @@ test "puff function" {
     var sourcelen = input.len;
 
     for (pufftests) |t| {
+        // clear dest
+        for (dest) |*d| {
+            d.* = 0;
+        }
         destlen = dest.len;
         sourcelen = t.input.len;
-        var ret = try puff(dest[0..], &destlen, t.input[0..], &sourcelen);
-        warn("{} bytes, '{}'\n", destlen, dest);
-        //assert(destlen == s.len);
+        const ret = try puff(dest[0..], &destlen, t.input[0..], &sourcelen);
+        warn("{} bytes, '{}', consumed={}, ret={}\n", destlen, dest, sourcelen, ret);
+        assert(destlen == t.output.len);
+        //assert(sourcelen == t.input.len);
     }
 
     //           "|One dead duck was wet and stuck. There it was out of luck|"
