@@ -151,6 +151,7 @@ const TDEFL_LZ_DICT_SIZE = 32768;
 const TDEFL_LZ_DICT_SIZE_MASK = TDEFL_LZ_DICT_SIZE - 1;
 const TDEFL_MIN_MATCH_LEN = 3;
 const TDEFL_MAX_MATCH_LEN = 258;
+const TDEFL_MAX_SUPPORTED_HUFF_CODESIZE = 32;
 
 const TDEFL_NO_FLUSH = 0;
 const TDEFL_SYNC_FLUSH = 2;
@@ -205,7 +206,7 @@ const DeflateCompressor = struct {
     pLZ_flags: u32,
     pOutput_buf: u32,
     pOutput_buf_end: u32,
-    nuflags_left: u32,
+    nun_flags_left: u32,
     total_lz_bytes: usize,
     lz_code_buf_dict_pos: usize,
     bits_in: u5,
@@ -264,6 +265,7 @@ fn tdefl_init(comp: *DeflateCompressor, flags: MZ_Flags) void {
     comp.max_probes[0] = 1 + ((flags & 0xFFF) + 2) / 3;
     comp.greedy_parsing = (flags & TDEFL_GREEDY_PARSING_FLAG) != 0;
     comp.max_probes[1] = 1 + (((flags & 0xFFF) >> 2) + 2) / 3;
+    warn("max_probes {} {}\n", comp.max_probes[0], comp.max_probes[1]);
     if ((flags & TDEFL_NONDETERMINISTIC_PARSING_FLAG) != 0) {
         //MZ_CLEAR_OBJ(comp.hash);
         for (comp.hash) |*v| {
@@ -287,7 +289,7 @@ fn tdefl_init(comp: *DeflateCompressor, flags: MZ_Flags) void {
     comp.pLZ_code_buf = 1;
     //comp.pLZ_flags = comp.lz_code_buf;
     comp.pLZ_flags = 0;
-    comp.nuflags_left = 8;
+    comp.nun_flags_left = 8;
     // position into output_buf
     comp.pOutput_buf = 0;
     comp.pOutput_buf_end = 0;
@@ -304,7 +306,7 @@ fn tdefl_init(comp: *DeflateCompressor, flags: MZ_Flags) void {
     comp.src_pos = 0;
     comp.src_buf_left = 0;
     comp.out_buf_ofs = 0;
-    if ((flags & TDEFL_NONDETERMINISTIC_PARSING_FLAG) != 0) {
+    if ((flags & TDEFL_NONDETERMINISTIC_PARSING_FLAG) == 0) {
         //MZ_CLEAR_OBJ(comp.dict);
         for (comp.dict) |*v|{
             v.* = 0;
@@ -384,13 +386,23 @@ fn tdefl_radix_sort_syms(nusyms: usize, pSyms0: []tdefl_syfreq, pSyms1: []tdefl_
 // inline
 fn record_literal(comp: *DeflateCompressor, lit: u8) void {
     warn("record_literal\n");
+    // d->m_total_lz_bytes++;
+    // *d->m_pLZ_code_buf++ = lit;
+    // *d->m_pLZ_flags = (mz_uint8)(*d->m_pLZ_flags >> 1);
     comp.total_lz_bytes += 1;
-    //*comp.pLZ_code_buf++ = lit;
-    //*comp.pLZ_flags = (mz_uint8)(*comp.pLZ_flags >> 1);
-    comp.nuflags_left -= 1;
-    if (comp.nuflags_left == 0)
+    comp.lz_code_buf[comp.pLZ_code_buf] = lit;
+    comp.pLZ_code_buf += 1;
+    comp.lz_code_buf[comp.pLZ_flags] = comp.lz_code_buf[comp.pLZ_flags] >> 1;
+    // if (--d->m_num_flags_left == 0)
+    // {
+    //     d->m_num_flags_left = 8;
+    //     d->m_pLZ_flags = d->m_pLZ_code_buf++;
+    // }
+    // d->m_huff_count[0][lit]++;
+    comp.nun_flags_left -= 1;
+    if (comp.nun_flags_left == 0)
     {
-        comp.nuflags_left = 8;
+        comp.nun_flags_left = 8;
         comp.pLZ_code_buf += 1;
         comp.pLZ_flags = comp.pLZ_code_buf;
     }
@@ -399,7 +411,7 @@ fn record_literal(comp: *DeflateCompressor, lit: u8) void {
 
 // inline
 fn record_match(comp: *DeflateCompressor, match_len: usize, pmatch_dist: usize) void {
-    warn("record_match\n");
+    warn("record_match {}, {}\n", match_len, pmatch_dist);
     var s0: u32 = 0;
     var s1: u32 = 0;
     var match_dist = pmatch_dist;
@@ -420,9 +432,9 @@ fn record_match(comp: *DeflateCompressor, match_len: usize, pmatch_dist: usize) 
 
     //*comp.pLZ_flags = u8((*comp.pLZ_flags >> 1) | 0x80);
     comp.lz_code_buf[comp.pLZ_flags] = (comp.lz_code_buf[comp.pLZ_flags] >> 1) | 0x80;
-    comp.nuflags_left -= 1;
-    if (comp.nuflags_left == 0) {
-        comp.nuflags_left = 8;
+    comp.nun_flags_left -= 1;
+    if (comp.nun_flags_left == 0) {
+        comp.nun_flags_left = 8;
         comp.pLZ_code_buf += 1;
         comp.pLZ_flags = comp.pLZ_code_buf;
     }
@@ -430,9 +442,10 @@ fn record_match(comp: *DeflateCompressor, match_len: usize, pmatch_dist: usize) 
     s0 = s_tdefl_small_dist_sym[match_dist & 511];
     s1 = s_tdefl_large_dist_sym[(match_dist >> 8) & 127];
     //comp.huff_count[1][(match_dist < 512) ? s0 : s1]++;
-    var dist: u32 = s0;
-    if (match_dist >= 512) {
-        dist = s1;
+    warn("match_dist={}\n", match_dist);
+    var dist: u32 = s1;
+    if (match_dist < 512) {
+        dist = s0;
     }
     comp.huff_count[1][dist] += 1;
 
@@ -445,13 +458,13 @@ fn find_match(comp: *DeflateCompressor, lookahead_pos: usize,
               max_dist: usize, max_match_len: usize,
               pmatch_dist: *usize, pmatch_len: *usize) void {
     //     mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pmatch_len, probe_pos = pos, next_probe_pos, probe_len;
-    warn("find_match\n");
+    warn("find_match: {},{},{},{},{}\n", lookahead_pos, max_dist, max_match_len, pmatch_dist.*, pmatch_len.*);
     var dist: u16 = 0;
     var next_probe_pos: u16 = 0;
     var pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
     var match_len = pmatch_len.*;
     var probe_pos = pos;
-    var nuprobes_left = if (match_len >= 32) comp.max_probes[1] else comp.max_probes[1];
+    var nuprobes_left = if (match_len >= 32) comp.max_probes[1] else comp.max_probes[0];
     //     const mz_uint8 *s = comp.dict + pos, *p, *q;
     var s = pos;
     var p:@typeOf(s) = 0;
@@ -543,6 +556,7 @@ fn find_match(comp: *DeflateCompressor, lookahead_pos: usize,
             // if ((*pmatch_len = match_len = probe_len) == max_match_len)
             //     return;
             if (probe_len == match_len) {
+                warn("probe_len={}, match_len={}\n", probe_len, match_len);
                 return;
             }
             c0 = comp.dict[pos + match_len];
@@ -557,18 +571,24 @@ fn optimize_huffman_table(comp: *DeflateCompressor, table_num: u8, table_len: us
                           code_size_limit: usize, static_table: bool) void {
     warn("optimize_huffman_table\n");
     // int i, j, l, num_codes[1 + TDEFL_MAX_SUPPORTED_HUFF_CODESIZE];
-    // mz_uint next_code[TDEFL_MAX_SUPPORTED_HUFF_CODESIZE + 1];
+    var num_codes = []u16 {0} **  (1 + TDEFL_MAX_SUPPORTED_HUFF_CODESIZE);
+    var next_code  = []u16 {0} ** (1 + TDEFL_MAX_SUPPORTED_HUFF_CODESIZE);
     // MZ_CLEAR_OBJ(num_codes);
-    // if (static_table)
-    // {
-    //     for (i = 0; i < table_len; i++)
-    //         num_codes[d->m_huff_code_sizes[table_num][i]]++;
-    // }
+    var i: usize = 0;
+    if (static_table)
+    {
+        warn("static_table\n");
+        i = 0;
+        while (i < table_len) {
+            num_codes[comp.huff_code_sizes[table_num][i]] += 1;
+            i += 1;
+        }
+    }
     // else
     // {
     //     tdefl_sym_freq syms0[TDEFL_MAX_HUFF_SYMBOLS], syms1[TDEFL_MAX_HUFF_SYMBOLS], *pSyms;
     //     int num_used_syms = 0;
-    //     const mz_uint16 *pSym_count = &d->m_huff_count[table_num][0];
+    //     const mz_uint16 *pSym_count = &comp.m_huff_count[table_num][0];
     //     for (i = 0; i < table_len; i++)
     //         if (pSym_count[i])
     //         {
@@ -584,27 +604,48 @@ fn optimize_huffman_table(comp: *DeflateCompressor, table_num: u8, table_len: us
 
     //     tdefl_huffman_enforce_max_code_size(num_codes, num_used_syms, code_size_limit);
 
-    //     MZ_CLEAR_OBJ(d->m_huff_code_sizes[table_num]);
-    //     MZ_CLEAR_OBJ(d->m_huff_codes[table_num]);
+    //     MZ_CLEAR_OBJ(comp.m_huff_code_sizes[table_num]);
+    //     MZ_CLEAR_OBJ(comp.m_huff_codes[table_num]);
     //     for (i = 1, j = num_used_syms; i <= code_size_limit; i++)
     //         for (l = num_codes[i]; l > 0; l--)
-    //             d->m_huff_code_sizes[table_num][pSyms[--j].m_sym_index] = (mz_uint8)(i);
+    //             comp.m_huff_code_sizes[table_num][pSyms[--j].m_sym_index] = (mz_uint8)(i);
     // }
 
-    // next_code[1] = 0;
+    next_code[1] = 0;
     // for (j = 0, i = 2; i <= code_size_limit; i++)
     //     next_code[i] = j = ((j + num_codes[i - 1]) << 1);
-
+    var j: usize = 0;
+    i = 2;
+    while (i <= code_size_limit ) : (i += 1) {
+        j = ((j + num_codes[i - 1]) << 1);
+        next_code[i] = @truncate(u16, j);
+    }
     // for (i = 0; i < table_len; i++)
     // {
     //     mz_uint rev_code = 0, code, code_size;
-    //     if ((code_size = d->m_huff_code_sizes[table_num][i]) == 0)
+    //     if ((code_size = comp.m_huff_code_sizes[table_num][i]) == 0)
     //         continue;
     //     code = next_code[code_size]++;
     //     for (l = code_size; l > 0; l--, code >>= 1)
     //         rev_code = (rev_code << 1) | (code & 1);
-    //     d->m_huff_codes[table_num][i] = (mz_uint16)rev_code;
+    //     comp.m_huff_codes[table_num][i] = (mz_uint16)rev_code;
     // }
+    i = 0;
+    warn("table_len={}\n", table_len);
+    while (i < table_len) : (i += 1) {
+        var code_size = comp.huff_code_sizes[table_num][i];
+        if (code_size == 0) {
+            continue;
+        }
+        const code = next_code[code_size];
+        next_code[code_size] += 1;
+        var rev_code: u16 = 0;
+        j = code_size;
+        while (j > 0) : (j -= 1) {
+            rev_code = (rev_code << 1) | (code & 1);
+        }
+        comp.huff_codes[table_num][i] = rev_code;
+    }
 }
 
 fn start_dynamic_block(comp: *DeflateCompressor) void {
@@ -745,7 +786,7 @@ fn compress_lz_codes(comp: *DeflateCompressor) bool {
             var match_dist = (comp.lz_code_buf[pLZ_codes + 1] | (u16(comp.lz_code_buf[pLZ_codes + 2]) << 8));
             pLZ_codes += 3;
 
-            //MZ_ASSERT(comp.huff_code_sizes[0][s_tdefl_len_sym[match_len]]);
+            assert(comp.huff_code_sizes[0][s_tdefl_len_sym[match_len]] != 0);
             comp.put_bits(comp.huff_codes[0][s_tdefl_len_sym[match_len]], comp.huff_code_sizes[0][s_tdefl_len_sym[match_len]]);
             comp.put_bits(match_len & mz_bitmasks[s_tdefl_len_extra[match_len]], s_tdefl_len_extra[match_len]);
 
@@ -790,18 +831,19 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
     // mz_bool comp_block_succeeded = MZ_FALSE;
     var comp_block_succeeded = false;
     // int n, use_raw_block = ((comp.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) && (comp.lookahead_pos - comp.lz_code_buf_dict_pos) <= comp.dict_size;
-    var use_raw_block = ((comp.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0);
+    var use_raw_block = ((comp.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0)
+        and ((comp.lookahead_pos - comp.lz_code_buf_dict_pos) <= comp.dict_size);
     // mz_uint8 *pOutput_buf_start = ((comp.pPut_buf_func == NULL) && ((*comp.pOut_buf_size - comp.out_buf_ofs) >= TDEFL_OUT_BUF_SIZE)) ? ((mz_uint8 *)comp.pOut_buf + comp.out_buf_ofs) : comp.output_buf;
-
-    // comp.pOutput_buf = pOutput_buf_start;
-    // comp.pOutput_buf_end = comp.pOutput_buf + TDEFL_OUT_BUF_SIZE - 16;
+    var pOutput_buf_start: u32 = 0;
+    comp.pOutput_buf = pOutput_buf_start;
+    comp.pOutput_buf_end = comp.pOutput_buf + TDEFL_OUT_BUF_SIZE - 16;
 
     // MZ_ASSERT(!comp.output_flush_remaining);
     comp.output_flush_ofs = 0;
     comp.output_flush_remaining = 0;
 
-    // *comp.pLZ_flags = (mz_uint8)(*comp.pLZ_flags >> comp.nuflags_left);
-    if (comp.nuflags_left == 8) {
+    // *comp.pLZ_flags = (mz_uint8)(*comp.pLZ_flags >> comp.nun_flags_left);
+    if (comp.nun_flags_left == 8) {
         comp.pLZ_code_buf -= 1;
     }
 
@@ -830,28 +872,30 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
         and ((comp.lookahead_pos - comp.lz_code_buf_dict_pos) <= comp.dict_size))
     {
         warn("must put bits\n");
-    //     mz_uint i;
-    //     comp.pOutput_buf = pSaved_output_buf;
-    //     comp.bit_buffer = saved_bit_buf, comp.bits_in = saved_bits_in;
-    //     put_bits(0, 2);
-    //     if (comp.bits_in)
-    //     {
-    //         put_bits(0, 8 - comp.bits_in);
-    //     }
-    //     for (i = 2; i; --i, comp.total_lz_bytes ^= 0xFFFF)
-    //     {
-    //         put_bits(comp.total_lz_bytes & 0xFFFF, 16);
-    //     }
-    //     for (i = 0; i < comp.total_lz_bytes; ++i)
-    //     {
-    //         put_bits(comp.dict[(comp.lz_code_buf_dict_pos + i) & TDEFL_LZ_DICT_SIZE_MASK], 8);
-    //     }
-    // }
-    // Check for the extremely unlikely (if not impossible) case of the compressed block not fitting into the output buffer when using dynamic codes.
+        // mz_uint i;
+        comp.pOutput_buf = pSaved_output_buf;
+        comp.bit_buffer = saved_bit_buf;
+        comp.bits_in = saved_bits_in;
+        comp.put_bits(0, 2);
+        // if (comp.bits_in)
+        // {
+        //     put_bits(0, 8 - comp.bits_in);
+        // }
+        // for (i = 2; i; --i, comp.total_lz_bytes ^= 0xFFFF)
+        // {
+        //     put_bits(comp.total_lz_bytes & 0xFFFF, 16);
+        // }
+        // for (i = 0; i < comp.total_lz_bytes; ++i)
+        // {
+        //     put_bits(comp.dict[(comp.lz_code_buf_dict_pos + i) & TDEFL_LZ_DICT_SIZE_MASK], 8);
+        // }
+        // Check for the extremely unlikely (if not impossible) case of the compressed block not fitting into the output buffer when using dynamic codes.
     } else if (!comp_block_succeeded) {
-        warn("comp_block_succeeded={}\n", comp_block_succeeded);
-        //     comp.pOutput_buf = pSaved_output_buf;
-        //     comp.bit_buffer = saved_bit_buf, comp.bits_in = saved_bits_in;
+        warn("comp_block_succeeded={}, {}, {}, {}\n",
+             comp_block_succeeded, pSaved_output_buf, saved_bit_buf, saved_bits_in);
+        comp.pOutput_buf = pSaved_output_buf;
+        comp.bit_buffer = saved_bit_buf;
+        comp.bits_in = saved_bits_in;
         _ = compress_block(comp, true);
     }
 
@@ -886,7 +930,7 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
         }
     }
 
-    //assert(comp.pOutput_buf < comp.pOutput_buf_end);
+    assert(comp.pOutput_buf < comp.pOutput_buf_end);
 
     // memset(&comp.huff_count[0][0], 0, sizeof(comp.huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
     // memset(&comp.huff_count[1][0], 0, sizeof(comp.huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
@@ -895,35 +939,37 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
     // comp.pLZ_flags = comp.lz_code_buf;
     comp.pLZ_code_buf = 1;
     comp.pLZ_flags = 0;
-    comp.nuflags_left = 8;
+    comp.nun_flags_left = 8;
     comp.lz_code_buf_dict_pos += comp.total_lz_bytes;
     comp.total_lz_bytes = 0;
     comp.block_index += 1;
+    var n = pOutput_buf_start;
+    warn("======== n={}, pOutput_buf_start={}\n", n, pOutput_buf_start);
 
     // if ((n = (int)(comp.pOutput_buf - pOutput_buf_start)) != 0)
-    // {
-    //     if (comp.pPut_buf_func)
-    //     {
-    //         *comp.pIn_buf_size = comp.pSrc - (const mz_uint8 *)comp.pIn_buf;
-    //         if (!(*comp.pPut_buf_func)(comp.output_buf, n, comp.pPut_buf_user))
-    //             return (comp.prev_return_status = TDEFL_STATUS_PUT_BUF_FAILED);
-    //     }
-    //     else if (pOutput_buf_start == comp.output_buf)
-    //     {
-    //         int bytes_to_copy = (int)MZ_MIN((size_t)n, (size_t)(*comp.pOut_buf_size - comp.out_buf_ofs));
-    //         memcpy((mz_uint8 *)comp.pOut_buf + comp.out_buf_ofs, comp.output_buf, bytes_to_copy);
-    //         comp.out_buf_ofs += bytes_to_copy;
-    //         if ((n -= bytes_to_copy) != 0)
-    //         {
-    //             comp.output_flush_ofs = bytes_to_copy;
-    //             comp.output_flush_remaining = n;
-    //         }
-    //     }
-    //     else
-    //     {
-    //         comp.out_buf_ofs += n;
-    //     }
-    // }
+    if (n != 0) {
+        // if (comp.pPut_buf_func)
+        // {
+        //     *comp.pIn_buf_size = comp.pSrc - (const mz_uint8 *)comp.pIn_buf;
+        //     if (!(*comp.pPut_buf_func)(comp.output_buf, n, comp.pPut_buf_user))
+        //         return (comp.prev_return_status = TDEFL_STATUS_PUT_BUF_FAILED);
+        // }
+        // else if (pOutput_buf_start == comp.output_buf)
+        // {
+        const bytes_to_copy = MZ_MIN(usize, n, (comp.out_buf_size - comp.out_buf_ofs));
+        warn("bytes_to_copy={}\n", bytes_to_copy);
+        //     int bytes_to_copy = (int)MZ_MIN((size_t)n, (size_t)(*comp.pOut_buf_size - comp.out_buf_ofs));
+        //     memcpy((mz_uint8 *)comp.pOut_buf + comp.out_buf_ofs, comp.output_buf, bytes_to_copy);
+        //     comp.out_buf_ofs += bytes_to_copy;
+        //     if ((n -= bytes_to_copy) != 0)
+        //     {
+        //         comp.output_flush_ofs = bytes_to_copy;
+        //         comp.output_flush_remaining = n;
+        //     }
+        // } else {
+        //    comp.out_buf_ofs += n;
+        // }
+    }
 
     return @bitCast(i32,@truncate(u32, comp.output_flush_remaining));
 }
@@ -932,8 +978,8 @@ fn compress_normal(comp: *DeflateCompressor) bool {
     var pSrc = comp.src_pos;
     var src_buf_left = comp.src_buf_left;
     //tdefl_flush flush = comp.flush;
-    var flush: u32 = comp.flush;
-
+    var flush = comp.flush;
+    warn("compress_normal {} {}\n", pSrc, src_buf_left);
     while ((src_buf_left > 0) or ((flush != 0) and (comp.lookahead_size > 0)))
     {
         var len_to_move: usize = 0;
@@ -943,10 +989,11 @@ fn compress_normal(comp: *DeflateCompressor) bool {
         // Update dictionary and hash chains. Keeps the lookahead size equal to TDEFL_MAX_MATCH_LEN.
         if ((comp.lookahead_size + comp.dict_size) >= (TDEFL_MIN_MATCH_LEN - 1))
         {
-            warn("case 1\n");
+            warn("case 1, {}, {}\n", comp.lookahead_size + comp.dict_size, usize(TDEFL_MIN_MATCH_LEN) - 1);
             // mz_uint dst_pos = (comp.lookahead_pos + comp.lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK, ins_pos = comp.lookahead_pos + comp.lookahead_size - 2;
             var dst_pos = (comp.lookahead_pos + comp.lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK;
             var ins_pos = comp.lookahead_pos + comp.lookahead_size - 2;
+            warn("dst_pos={}, ins_pos={}\n", dst_pos, ins_pos);
             // mz_uint hash = (comp.dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] << TDEFL_LZ_HASH_SHIFT) ^ comp.dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
             var hash = (u16(comp.dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK]) << TDEFL_LZ_HASH_SHIFT) ^ comp.dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
             // mz_uint nubytes_to_process = (mz_uint)MZ_MIN(src_buf_left, TDEFL_MAX_MATCH_LEN - comp.lookahead_size);
@@ -1214,15 +1261,16 @@ test "test me please" {
     //    warn("[{}] key={}, symindex={}\n", i, it.key, it.syindex);
     //}
     var compressor: DeflateCompressor = undefined;
-    tdefl_init(&compressor, 0);
+    tdefl_init(&compressor, TDEFL_GREEDY_PARSING_FLAG | TDEFL_FINISH | TDEFL_WRITE_ZLIB_HEADER| 32);
     warn("sizeof compressor={}\n", usize(@sizeOf(@typeOf(compressor))));
-    var input = "The quick brown fox jumps over the lazy dog";
-    //var input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    //var input = "The quick brown fox jumps over the lazy dog";
+    var input =   "abababababababababababababababab";
     const expected = "x\x9c\x0b\xc9HU(,\xcdL\xceVH*\xca/\xcfSH\xcb\xafP\xc8*\xcd-(V\xc8/K-R(\x01J\xe7$VU*\xa4\xe4\xa7\x03\x00[\xdc\x0f\xda";
     var inputlen = input.len;
     var output = []u8 {0} ** 1024;
     var outputlen = output.len;
-    var result = compress(&compressor, input[0..], &inputlen, output[0..], &outputlen, TDEFL_FINISH | TDEFL_WRITE_ZLIB_HEADER);
+    var result = compress(&compressor, input[0..], &inputlen, output[0..], &outputlen,
+                          TDEFL_GREEDY_PARSING_FLAG | TDEFL_FINISH | TDEFL_WRITE_ZLIB_HEADER| 32);
     warn("1 {} {}\n", result, compressor.inbuf);
     warn("2 {}, {}\n", inputlen, outputlen);
     warn("3 {}, {}, {} {}\n", expected, compressor.src_pos, compressor.src_buf_left, compressor.pOutput_buf);
