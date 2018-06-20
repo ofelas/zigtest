@@ -2,33 +2,33 @@
 const warn = @import("std").debug.warn;
 const assert = @import("std").debug.assert;
 
- // * puff.c
- // * Copyright (C) 2002-2013 Mark Adler
- // * For conditions of distribution and use, see copyright notice in puff.h
- // * version 2.3, 21 Jan 2013
- // *
- // * puff.c is a simple inflate written to be an unambiguous way to specify the
- // * deflate format.  It is not written for speed but rather simplicity.  As a
- // * side benefit, this code might actually be useful when small code is more
- // * important than speed, such as bootstrap applications.  For typical deflate
- // * data, zlib's inflate() is about four times as fast as puff().  zlib's
- // * inflate compiles to around 20K on my machine, whereas puff.c compiles to
- // * around 4K on my machine (a PowerPC using GNU cc).  If the faster decode()
- // * function here is used, then puff() is only twice as slow as zlib's
- // * inflate().
- // *
- // * All dynamically allocated memory comes from the stack.  The stack required
- // * is less than 2K bytes.  This code is compatible with 16-bit int's and
- // * assumes that long's are at least 32 bits.  puff.c uses the short data blktype,
- // * assumed to be 16 bits, for arrays in order to conserve memory.  The code
- // * works whether integers are stored big endian or little endian.
- // *
- // * In the comments below are "Format notes" that describe the inflate process
- // * and document some of the less obvious aspects of the format.  This source
- // * code is meant to supplement RFC 1951, which formally describes the deflate
- // * format:
- // *
- // *    http://www.zlib.org/rfc-deflate.html
+// puff.c
+// Copyright (C) 2002-2013 Mark Adler
+// For conditions of distribution and use, see copyright notice in puff.h
+// version 2.3, 21 Jan 2013
+// 
+// puff.c is a simple inflate written to be an unambiguous way to specify the
+// deflate format.  It is not written for speed but rather simplicity.  As a
+// side benefit, this code might actually be useful when small code is more
+// important than speed, such as bootstrap applications.  For typical deflate
+// data, zlib's inflate() is about four times as fast as puff().  zlib's
+// inflate compiles to around 20K on my machine, whereas puff.c compiles to
+// around 4K on my machine (a PowerPC using GNU cc).  If the faster decode()
+// function here is used, then puff() is only twice as slow as zlib's
+// inflate().
+// 
+// All dynamically allocated memory comes from the stack.  The stack required
+ // is less than 2K bytes.  This code is compatible with 16-bit int's and
+// assumes that long's are at least 32 bits.  puff.c uses the short data blktype,
+// assumed to be 16 bits, for arrays in order to conserve memory.  The code
+// works whether integers are stored big endian or little endian.
+// 
+// In the comments below are "Format notes" that describe the inflate process
+// and document some of the less obvious aspects of the format.  This source
+// code is meant to supplement RFC 1951, which formally describes the deflate
+// format:
+// 
+//    http://www.zlib.org/rfc-deflate.html
 
 const PuffError = error {
     OutOfInput,
@@ -51,21 +51,16 @@ const DBG = false;
 // input and output state
 const state = struct {
     // output state
-    // unsigned char *out;         //* output buffer */
     outbuf: []u8,
-    outlen: usize,       //* available space at out */
-    outcnt: usize,       //* bytes written to out so far */
+    outlen: usize,              // available space at out
+    outcnt: usize,              // bytes written to out so far
 
     // input state
-    // const unsigned char *in;    //* input buffer */
     inbuf: []const u8,
-    inlen: usize,        //* available input at in */
-    incnt: usize,        //* bytes read so far */
-    bitbuf: u32,                 //* bit buffer */
-    bitcnt: u5,                 //* number of bits in bit buffer */
-
-    //* input limit error return state for bits() and decode() */
-    // jmp_buf env;
+    inlen: usize,               // available input at in
+    incnt: usize,               // bytes read so far
+    bitbuf: u32,                // bit buffer
+    bitcnt: u5,                 // number of bits in bit buffer
 
     // Return need bits from the input stream.  This always leaves less than
     // eight bits in the buffer.  bits() works properly for need == 0.
@@ -82,10 +77,9 @@ const state = struct {
         var val: u32 = s.*.bitbuf; // bit accumulator (can use up to 20 bits)
         while (s.*.bitcnt < need) {
             if (s.*.incnt == s.*.inlen) {
-                //longjmp(s.env, 1);         // out of input
                 return error.OufOfInput;
             }
-            val |= u32(s.inbuf[s.*.incnt]) << s.*.bitcnt;
+            val |= u32(s.*.inbuf[s.*.incnt]) << s.*.bitcnt;
             s.*.incnt += 1;
             s.*.bitcnt += 8;
         }
@@ -121,19 +115,19 @@ const state = struct {
     //   in the deflate format.  See the format notes for fixed() and dynamic().
     fn decode(s: *state, h: *huffman) !u32 {
         var len: u32 = 0;            // current number of bits in code
-        var code: u32 = 0;           // len bits being decoded
+        var code: i32 = 0;           // len bits being decoded
         var first: i32 = 0;          // first code of length len
         var index: u32 = 0;          // index of first code of length len in symbol table
 
         len = 1;
         while (len <= MAXBITS) {
-            code |= try s.bits(1);  // get next bit
+            code |= @intCast(i32, try s.bits(1));  // get next bit
             const count = i32(h.*.count[len]); // number of codes of length len
-            if ((i32(code) - count) < first) {      // if length len, return symbol
+            if ((code - count) < first) {      // if length len, return symbol
                 //warn("code={x}, count={}, {}, first={}, len={}\n", code, count, i32(code) - count, first, len);
-                return u32((h.*.symbol)[index + (code - u32(first))]);
+                return u32((h.*.symbol)[index + @intCast(u32, code - first)]);
             }
-            index += u32(count);                 // else update for next length
+            index += @intCast(u32, count); // else update for next length
             first += count;
             first <<= 1;
             code <<= 1;
@@ -176,10 +170,10 @@ const state = struct {
         if (s.inbuf[s.incnt] != (~len & 0xff)) {
             if (s.inbuf[s.incnt + 1] != ((~len >> 8) & 0xff)) {
                 s.incnt += 2;
-                return error.ComplementMismatch;                              // didn't match complement!
+                return error.ComplementMismatch; // didn't match complement!
             }
         }
-        s.incnt += 2;               // compensate for s.incnt++ int if statements above
+        s.incnt += 2; // compensate for s.incnt++ int if statements above
 
         // copy len bytes from in to out
         if ((s.incnt + len) > s.inlen) {
@@ -200,10 +194,9 @@ const state = struct {
             s.incnt += len;
         }
 
-    //* done with a valid stored block */
-    return 0;
-}
-
+        // done with a valid stored block
+        return 0;
+    }
 };
 
 // Huffman code decoding tables.  count[1..MAXBITS] is the number of symbols of
@@ -305,58 +298,50 @@ fn fdecode(s: *state, h: *huffman) !u32 {
 // - Within a given code length, the symbols are kept in ascending order for
 //   the code bits definition.
 fn construct(h: *huffman, length: []u16, n: usize) !u32 {
-    var symbol: usize = 0;         // current symbol when stepping through length[]
-    var len: usize = 0;            // current length when stepping through h->count[]
-    var left: i32 = 0;           // number of possible codes left of current length
-    var offs: [MAXBITS+1]u16 = undefined;      // offsets in symbol table for each length
+    var symbol: usize = 0; // current symbol when stepping through length[]
+    var len: usize = 0; // current length when stepping through h->count[]
+    var left: i32 = 0; // number of possible codes left of current length
+    var offs = []u16 {0} ** (MAXBITS + 1); // offsets in symbol table for each length
 
+    assert(length.len >= n);
     // count number of codes of each length
-    len = 0;
-    while (len <= MAXBITS) {
-        h.*.count[len] = 0;
-        len += 1;
-    }
     symbol = 0;
     while (symbol < n) : (symbol += 1) {
-        h.*.count[length[symbol]] += 1;   // assumes lengths are within bounds
+        h.*.count[length[symbol]] += 1; // assumes lengths are within bounds
     }
-    if (h.*.count[0] == n) {             // no codes!
-        return 0;                       // complete, but decode() will fail
+    if (h.*.count[0] == n) {    // no codes!
+        return 0;               // complete, but decode() will fail
     }
 
     // check for an over-subscribed or incomplete set of lengths
-    left = 1;                           // one possible code of zero length
+    left = 1;                   // one possible code of zero length
     len = 1;
-    while (len <= MAXBITS) {
-        left <<= 1;                     // one more bit, double codes left
-        left -= i32(h.count[len]);          // deduct count from possible codes
+    while (len <= MAXBITS) : (len += 1) {
+        left <<= 1;             // one more bit, double codes left
+        left -= i32(h.*.count[len]); // deduct count from possible codes
         if (left < 0) {
-            return error.OverSubscribed;                // over-subscribed--return negative
+            return error.OverSubscribed; // over-subscribed--return negative
         }
-        len += 1;
-    }                                   // left > 0 means incomplete
+    }                           // left > 0 means incomplete
               
     // generate offsets into symbol table for each length for sorting
     offs[1] = 0;
     len = 1;
-    while (len < MAXBITS) {
-        offs[len + 1] = offs[len] + h.count[len];
-        len += 1;
+    while (len < MAXBITS) : (len += 1) {
+        offs[len + 1] = offs[len] + h.*.count[len];
     }
 
     // put symbols in table sorted by length, by symbol order within
     // each length
     symbol = 0;
-    while (symbol < n) {
+    while (symbol < n) : (symbol += 1) {
         if (length[symbol] != 0) {
-            h.symbol[offs[length[symbol]]] = u16(symbol);
+            h.*.symbol[offs[length[symbol]]] = @intCast(u16, symbol & @maxValue(u16));
             offs[length[symbol]] += 1;
         }
-        symbol += 1;
     }
     // return zero for complete set, positive for incomplete set
-    // warn("{} codes left\n", left);
-    return u32(left);
+    return @intCast(u32, left);
 }
 
 // Decode literal/length and distance codes until an end-of-block code.
@@ -436,13 +421,12 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
     while (true) {
         symbol = try s.decode(plencode);
         if (symbol < 256) {             // literal: symbol is the byte
-            //warn("literal symbol {x}\n", symbol);
             // write out the literal
             if (s.*.outbuf.len != 0) {
                 if (s.*.outcnt == s.*.outlen) {
                     return error.OutputFull;
                 }
-                s.*.outbuf[s.*.outcnt] = u8(symbol);
+                s.*.outbuf[s.*.outcnt] = @intCast(u8, symbol & @maxValue(u8));
             }
             s.*.outcnt += 1;
         }
@@ -454,18 +438,16 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
                 return error.InvalidFixedCode; // invalid fixed code
             }
             len = lens[symbol];
-            len += try s.bits(lext[u5(symbol)]);
+            len += try s.bits(lext[(symbol & 0x1f)]);
 
             // get and check distance
             symbol = try s.decode(pdistcode);
-            //warn("symbol={}\n", symbol);
             // symbol cannot be < 0 here, we use u32...
             if (symbol < 0) {
                 return error.InvalidSymbol; // invalid symbol
             }
             distance = dists[symbol];
-            distance += try s.bits(dext[u5(symbol)]);
-            //warn("sy={}, symbol={}, len={}, distance={}\n", sy, symbol, len, distance);
+            distance += try s.bits(dext[symbol & @maxValue(u5)]);
             if (distance > s.*.outcnt) {
                  return error.DistanceTooFarBack;
             }
@@ -490,7 +472,6 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
             }
         }
         if (symbol == 256) {    // end of symbol block
-            warn("end of symbol block\n");
             break;
         }
     } //while (symbol != 256);            /* end of block symbol */
@@ -530,13 +511,34 @@ var distsym: [MAXDCODES]u16 = undefined;
 var lencode: huffman = undefined;
 var distcode: huffman = undefined;
 fn fixed(s: *state) !void {
-
     // build fixed huffman tables if first call (may not be thread safe)
-    warn("fixed\n");
+    // candidate for comptime?!?
     if (virgin) {
         warn("virgin\n");
         var symbol: usize = 0;
-        var lengths: [FIXLCODES]u16 = undefined;
+        // literal/length table
+        // do this comptime, we actually want to setup lencode and distcode using construct
+        var lengths: [FIXLCODES]u16 = comptime block: {
+            var ct_table: [FIXLCODES]u16 = undefined;
+            var iter = 0;
+            while (iter < 144) {
+                ct_table[iter] = 8;
+                iter += 1;
+            }
+            while (iter < 256) {
+                ct_table[iter] = 9;
+                iter += 1;
+            }
+            while (iter < 280) {
+                ct_table[iter] = 7;
+                iter += 1;
+            }
+            while (iter < FIXLCODES) {
+                ct_table[iter] = 8;
+                iter += 1;
+            }
+            break :block ct_table;
+        };
 
         // construct lencode and distcode 
         lencode.count = &lencnt;
@@ -544,28 +546,8 @@ fn fixed(s: *state) !void {
         distcode.count = &distcnt;
         distcode.symbol = &distsym;
 
-        // literal/length table
-        symbol = 0;
-        while (symbol < 144) {
-            lengths[symbol] = 8;
-            symbol += 1;
-        }
-        while (symbol < 256) {
-            lengths[symbol] = 9;
-            symbol += 1;
-        }
-        while (symbol < 280) {
-            lengths[symbol] = 7;
-            symbol += 1;
-        }
-        while (symbol < FIXLCODES) {
-            lengths[symbol] = 8;
-            symbol += 1;
-        }
-        //for (lengths) |l, i|{
-        //    warn("[{}]={}\n", i, l);
-        //}
-        _ = construct(&lencode, lengths[0..], FIXLCODES);
+        var left = construct(&lencode, lengths[0..], FIXLCODES);
+        warn("left={}\n", left);
 
         // distance table
         symbol = 0;
@@ -573,14 +555,14 @@ fn fixed(s: *state) !void {
             lengths[symbol] = 5;
             symbol += 1;
         }
-        _ = construct(&distcode, lengths[0..], MAXDCODES);
+        left = construct(&distcode, lengths[0..], MAXDCODES);
+        warn("left={}\n", left);
 
         // do this just once
         virgin = false;
     }
 
     // decode data until end-of-block code
-    warn("calling codes\n");
     _ = try codes(s, &lencode, &distcode);
     return ;
 }
@@ -708,7 +690,7 @@ fn dynamic(s: *state) !u32 {
     // read code length code lengths (really), missing lengths are zero
     index = 0;
     while (index < ncode) {
-        lengths[order[index]] = u16(try s.bits(3));
+        lengths[order[index]] = @intCast(u16, try s.bits(3));
         index += 1;
     }
     while (index < 19) {
@@ -733,7 +715,7 @@ fn dynamic(s: *state) !u32 {
             return symbol;          // invalid symbol
         }
         if (symbol < 16) {               // length in 0..15
-            lengths[index] = u16(symbol);
+            lengths[index] = @intCast(u16, symbol);
             index += 1;
         } else {                          // repeat instruction
             len = 0;                    // assume repeating zeros
@@ -749,10 +731,10 @@ fn dynamic(s: *state) !u32 {
                 symbol = 11 + try s.bits(7);
             }
             if (index + symbol > nlen + ndist) {
-                return error.TooManyLength;              // too many lengths!
+                return error.TooManyLengths;              // too many lengths!
             }
             while (symbol > 0) {            // repeat last or zero symbol times
-                lengths[index] = u16(len);
+                lengths[index] = @intCast(u16, len);
                 index += 1;
                 symbol -= 1;
             }
