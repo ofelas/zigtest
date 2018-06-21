@@ -1,5 +1,6 @@
 // -*- mode:zig; indent-tabs-mode:nil;  -*-
-
+// See https://github.com/richgel999/miniz
+//
 const warn = @import("std").debug.warn;
 const assert = @import("std").debug.assert;
 const adler32 = @import("adler32.zig").adler32;
@@ -244,18 +245,54 @@ const DeflateCompressor = struct {
 
     fn put_bits(comp: *DeflateCompressor, bits: u32, len: u5) void {
         assert(bits <= ((u32(1) << len) - 1));
-        warn("putting bits={x04}, len={}, bits_in={}\n", bits, len, comp.bits_in);
+        // warn("putting bits={x04}, len={}, bits_in={}\n", bits, len, comp.bits_in);
         comp.bit_buffer |= (u32(bits) << u5(comp.bits_in));
         comp.bits_in += len;
         while (comp.bits_in >= 8) {
             if (comp.output_buf_pos < comp.output_buf_end_pos) {
-                warn("PUTTING@{} {x02}\n", comp.output_buf_pos, @intCast(u8, comp.bit_buffer & 0xff));
+                // warn("PUTTING@{} {x02}\n", comp.output_buf_pos, @intCast(u8, comp.bit_buffer & 0xff));
                 comp.output_buf[comp.output_buf_pos] = @intCast(u8, comp.bit_buffer & 0xff);
                 comp.output_buf_pos += 1;
             }
             comp.bit_buffer >>= 8;
             comp.bits_in -= 8;
         }
+    }
+
+    inline fn record_literal(comp: *DeflateCompressor, lit: u8) void {
+        // warn("record_literal@{} total={}, lit={x02}\n", comp.lz_code_buf_pos, comp.total_lz_bytes, lit);
+        // d->m_total_lz_bytes++;
+        // *d->m_pLZ_code_buf++ = lit;
+        // *d->m_pLZ_flags = (mz_uint8)(*d->m_pLZ_flags >> 1);
+        comp.total_lz_bytes += 1;
+        comp.lz_code_buf[comp.lz_code_buf_pos] = lit;
+        comp.lz_code_buf_pos += 1;
+        comp.lz_code_buf[comp.lz_flags_pos] = comp.lz_code_buf[comp.lz_flags_pos] >> 1;
+        // if (--d->m_num_flags_left == 0)
+        // {
+        //     d->m_num_flags_left = 8;
+        //     d->m_pLZ_flags = d->m_pLZ_code_buf++;
+        // }
+        // d->m_huff_count[0][lit]++;
+        comp.num_flags_left -= 1;
+        if (comp.num_flags_left == 0)
+        {
+            comp.num_flags_left = 8;
+            comp.lz_code_buf_pos += 1;
+            comp.lz_flags_pos = comp.lz_code_buf_pos;
+        }
+        comp.huff_count[0][lit] += 1;
+    }
+
+
+    fn compress_block(comp: *DeflateCompressor, static_block: bool) bool {
+        //warn("compress_block static={}\n", static_block);
+        if (static_block) {
+            start_static_block(comp);
+        } else {
+            start_dynamic_block(comp);
+        }
+        return compress_lz_codes(comp);
     }
 };
 
@@ -374,12 +411,11 @@ fn tdefl_radix_sort_syms(nusyms: usize, pSyms0: []tdefl_syfreq, pSyms1: []tdefl_
             offsets[idx] += 1;
             i += 1;
         }
-    //         tdefl_syfreq *t = pCur_syms;
-    //         pCur_syms = pNew_syms;
-    //         pNew_syms = t;
-
-                                // swap
-        var t = pCur_syms;
+        // tdefl_syfreq *t = pCur_syms;
+        // pCur_syms = pNew_syms;
+        // pNew_syms = t;
+        // -- swap --
+        const t = pCur_syms;
         pCur_syms = pNew_syms;
         pNew_syms = t;
 
@@ -389,34 +425,9 @@ fn tdefl_radix_sort_syms(nusyms: usize, pSyms0: []tdefl_syfreq, pSyms1: []tdefl_
     return pCur_syms;
 }
 
-// inline
-fn record_literal(comp: *DeflateCompressor, lit: u8) void {
-    warn("record_literal@{} total={}, lit={x02}\n", comp.lz_code_buf_pos, comp.total_lz_bytes, lit);
-    // d->m_total_lz_bytes++;
-    // *d->m_pLZ_code_buf++ = lit;
-    // *d->m_pLZ_flags = (mz_uint8)(*d->m_pLZ_flags >> 1);
-    comp.total_lz_bytes += 1;
-    comp.lz_code_buf[comp.lz_code_buf_pos] = lit;
-    comp.lz_code_buf_pos += 1;
-    comp.lz_code_buf[comp.lz_flags_pos] = comp.lz_code_buf[comp.lz_flags_pos] >> 1;
-    // if (--d->m_num_flags_left == 0)
-    // {
-    //     d->m_num_flags_left = 8;
-    //     d->m_pLZ_flags = d->m_pLZ_code_buf++;
-    // }
-    // d->m_huff_count[0][lit]++;
-    comp.num_flags_left -= 1;
-    if (comp.num_flags_left == 0)
-    {
-        comp.num_flags_left = 8;
-        comp.lz_code_buf_pos += 1;
-        comp.lz_flags_pos = comp.lz_code_buf_pos;
-    }
-    comp.huff_count[0][lit] += 1;
-}
 
 // inline
-fn record_match(comp: *DeflateCompressor, match_len: usize, pmatch_dist: usize) void {
+inline fn record_match(comp: *DeflateCompressor, match_len: usize, pmatch_dist: usize) void {
     warn("record_match len={}, distance={}\n", match_len, pmatch_dist);
     var s0: u32 = 0;
     var s1: u32 = 0;
@@ -464,7 +475,7 @@ fn find_match(comp: *DeflateCompressor, lookahead_pos: usize,
               max_dist: usize, max_match_len: usize,
               pmatch_dist: *usize, pmatch_len: *usize) void {
     //     mz_uint dist, pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK, match_len = *pmatch_len, probe_pos = pos, next_probe_pos, probe_len;
-    warn("find_match: {},{},{},{},{}\n", lookahead_pos, max_dist, max_match_len, pmatch_dist.*, pmatch_len.*);
+    //warn("find_match: {},{},{},{},{}\n", lookahead_pos, max_dist, max_match_len, pmatch_dist.*, pmatch_len.*);
     var dist: u16 = 0;
     var next_probe_pos: u16 = 0;
     var pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
@@ -485,7 +496,7 @@ fn find_match(comp: *DeflateCompressor, lookahead_pos: usize,
     while (true) {
         //         for (;;)
         while (true) {
-            warn("nuprobes_left = {}, {x02}, {x02}, {}\n", nuprobes_left, c0, c1, comp.next[probe_pos]);
+            //warn("nuprobes_left = {}, {x02}, {x02}, {}\n", nuprobes_left, c0, c1, comp.next[probe_pos]);
             nuprobes_left -= 1;
             if (nuprobes_left == 0) {
                 return;
@@ -563,7 +574,7 @@ fn find_match(comp: *DeflateCompressor, lookahead_pos: usize,
             // if ((*pmatch_len = match_len = probe_len) == max_match_len)
             //     return;
             if (probe_len == match_len) {
-                warn("probe_len={}, match_len={}\n", probe_len, match_len);
+                //warn("probe_len={}, match_len={}\n", probe_len, match_len);
                 return;
             }
             c0 = comp.dict[pos + match_len];
@@ -777,7 +788,7 @@ fn start_static_block(comp: *DeflateCompressor) void {
 }
 
 fn compress_lz_codes(comp: *DeflateCompressor) bool {
-    warn("compress_lz_codes\n");
+    //warn("compress_lz_codes\n");
     var flags: u32 = 1;
     var lz_code_pos: usize = 0;
     while (lz_code_pos < comp.lz_code_buf_pos) : (flags >>= 1) {
@@ -785,14 +796,14 @@ fn compress_lz_codes(comp: *DeflateCompressor) bool {
             flags = @typeOf(flags)(comp.lz_code_buf[lz_code_pos]) | 0x100;
             lz_code_pos += 1;
         }
-        warn("flags={x08}\n", flags);
+        //warn("flags={x08}\n", flags);
         if ((flags & 1) == 1) {
             var sym: u8 = 0;
             var num_extra_bits: u5 = 0;
             const match_len = comp.lz_code_buf[lz_code_pos];
             const match_dist = (comp.lz_code_buf[lz_code_pos + 1] | (u16(comp.lz_code_buf[lz_code_pos + 2]) << 8));
             lz_code_pos += 3;
-            warn("match len={}, dist={}\n", match_len, match_dist);
+            //warn("match len={}, dist={}\n", match_len, match_dist);
             assert(comp.huff_code_sizes[0][s_tdefl_len_sym[match_len]] != 0);
             comp.put_bits(comp.huff_codes[0][s_tdefl_len_sym[match_len]], comp.huff_code_sizes[0][s_tdefl_len_sym[match_len]]);
             comp.put_bits(match_len & mz_bitmasks[s_tdefl_len_extra[match_len]], s_tdefl_len_extra[match_len]);
@@ -820,18 +831,8 @@ fn compress_lz_codes(comp: *DeflateCompressor) bool {
     return (comp.output_buf_pos < comp.output_buf_end_pos);
 }
 
-fn compress_block(comp: *DeflateCompressor, static_block: bool) bool {
-    warn("compress_block static={}\n", static_block);
-    if (static_block) {
-        start_static_block(comp);
-    } else {
-        start_dynamic_block(comp);
-    }
-    return compress_lz_codes(comp);
-}
-
 fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
-    warn("flush_block {x8}, {}\n", flush, comp.total_lz_bytes);
+    //warn("flush_block {x8}, {}\n", flush, comp.total_lz_bytes);
     // mz_uint saved_bit_buf, saved_bits_in;
     // mz_uint8 *saved_output_buf_pos;
     // mz_bool comp_block_succeeded = MZ_FALSE;
@@ -866,8 +867,8 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
     var saved_bits_in = comp.bits_in;
 
     if (use_raw_block) {
-        comp_block_succeeded = compress_block(comp, ((comp.flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) != 0) or (comp.total_lz_bytes < 48));
-        warn("use_raw={}, comp_block_succeeded={}\n", use_raw_block, comp_block_succeeded);
+        comp_block_succeeded = comp.compress_block(((comp.flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) != 0) or (comp.total_lz_bytes < 48));
+        //warn("use_raw={}, comp_block_succeeded={}\n", use_raw_block, comp_block_succeeded);
 }
     // If the block gets expanded, forget the current contents of the output buffer and send a raw block instead.
     if (((use_raw_block)
@@ -894,24 +895,24 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
         // }
         // Check for the extremely unlikely (if not impossible) case of the compressed block not fitting into the output buffer when using dynamic codes.
     } else if (!comp_block_succeeded) {
-        warn("NOT comp_block_succeeded={}, {}, {}, {}\n",
-             comp_block_succeeded, saved_output_buf_pos, saved_bit_buf, saved_bits_in);
+        //warn("NOT comp_block_succeeded={}, {}, {}, {}\n",
+        //     comp_block_succeeded, saved_output_buf_pos, saved_bit_buf, saved_bits_in);
         comp.output_buf_pos = saved_output_buf_pos;
         comp.bit_buffer = saved_bit_buf;
         comp.bits_in = saved_bits_in;
-        const cbs = compress_block(comp, true);
-        warn("cbs={}\n", cbs);
+        const cbs = comp.compress_block(true);
+        //warn("cbs={}\n", cbs);
     }
 
     if (flush != 0) {
-        warn("flush != 0, {x}\n", flush);
+        //warn("flush != 0, {x}\n", flush);
         if (flush == TDEFL_FINISH) {
-            warn("flush finish\n");
+            //warn("flush finish\n");
             if (comp.bits_in != 0) {
                 comp.put_bits(0, 8 - comp.bits_in);
             }
             if ((comp.flags & TDEFL_WRITE_ZLIB_HEADER) == TDEFL_WRITE_ZLIB_HEADER) {
-                warn("must write adler32\n");
+                //warn("must write adler32\n");
                 // mz_uint i, a = comp.adler32;
                 // for (i = 0; i < 4; i++)
                 // {
@@ -926,7 +927,7 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
                 }
             }
         } else {
-            warn("flush else\n");
+            //warn("flush else\n");
             // mz_uint i, z = 0;
             comp.put_bits(0, 3);
             if (comp.bits_in != 0) {
@@ -964,7 +965,7 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
     comp.total_lz_bytes = 0;
     comp.block_index += 1;
     var n = comp.output_buf_pos - toutput_buf_start_pos;
-    warn("======== n={}, toutput_buf_start_pos={}\n", n, toutput_buf_start_pos);
+    //warn("======== n={}, toutput_buf_start_pos={}\n", n, toutput_buf_start_pos);
 
     // if ((n = (int)(comp.output_buf_pos - toutput_buf_start_pos)) != 0)
     if (n != 0) {
@@ -978,7 +979,7 @@ fn flush_block(comp: *DeflateCompressor, flush: u32) i32 {
         if (toutput_buf_start_pos == 0) {
             //     int bytes_to_copy = (int)MZ_MIN((size_t)n, (size_t)(*comp.pOut_buf_size - comp.out_buf_ofs));
             const bytes_to_copy = MZ_MIN(usize, n, (comp.out_buf_size - comp.out_buf_ofs));
-            warn("bytes_to_copy={}\n", bytes_to_copy);
+            //warn("bytes_to_copy={}\n", bytes_to_copy);
             //     memcpy((mz_uint8 *)comp.pOut_buf + comp.out_buf_ofs, comp.output_buf, bytes_to_copy);
             var i : @typeOf(bytes_to_copy) = 0;
             while (i < bytes_to_copy) : (i += 1) {
@@ -1003,7 +1004,7 @@ fn compress_normal(comp: *DeflateCompressor) bool {
     var src_buf_left = comp.src_buf_left;
     //tdefl_flush flush = comp.flush;
     var flush = comp.flush;
-    warn("!!! compress_normal {} {}\n", src_pos, src_buf_left);
+    //warn("!!! compress_normal {} {}\n", src_pos, src_buf_left);
     while ((src_buf_left > 0) or ((flush != 0) and (comp.lookahead_size > 0)))
     {
         var len_to_move: usize = 0;
@@ -1013,11 +1014,11 @@ fn compress_normal(comp: *DeflateCompressor) bool {
         // Update dictionary and hash chains. Keeps the lookahead size equal to TDEFL_MAX_MATCH_LEN.
         if ((comp.lookahead_size + comp.dict_size) >= (TDEFL_MIN_MATCH_LEN - 1))
         {
-            warn("case 1, {}, {}\n", comp.lookahead_size + comp.dict_size, usize(TDEFL_MIN_MATCH_LEN) - 1);
+            //warn("case 1, {}, {}\n", comp.lookahead_size + comp.dict_size, usize(TDEFL_MIN_MATCH_LEN) - 1);
             // mz_uint dst_pos = (comp.lookahead_pos + comp.lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK, ins_pos = comp.lookahead_pos + comp.lookahead_size - 2;
             var dst_pos = (comp.lookahead_pos + comp.lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK;
             var ins_pos = comp.lookahead_pos + comp.lookahead_size - 2;
-            warn("dst_pos={}, ins_pos={}\n", dst_pos, ins_pos);
+            //warn("dst_pos={}, ins_pos={}\n", dst_pos, ins_pos);
             // mz_uint hash = (comp.dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] << TDEFL_LZ_HASH_SHIFT) ^ comp.dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
             var hash = (u16(comp.dict[ins_pos & TDEFL_LZ_DICT_SIZE_MASK]) << TDEFL_LZ_HASH_SHIFT) ^ comp.dict[(ins_pos + 1) & TDEFL_LZ_DICT_SIZE_MASK];
             // mz_uint nubytes_to_process = (mz_uint)MZ_MIN(src_buf_left, TDEFL_MAX_MATCH_LEN - comp.lookahead_size);
@@ -1042,7 +1043,7 @@ fn compress_normal(comp: *DeflateCompressor) bool {
         }
         else
         {
-            warn("case 2: src_buf_left={}, lookahead_size={}\n",src_buf_left, comp.lookahead_size);
+            //warn("case 2: src_buf_left={}, lookahead_size={}\n",src_buf_left, comp.lookahead_size);
             while ((src_buf_left > 0) and (comp.lookahead_size < TDEFL_MAX_MATCH_LEN))
             {
                 const c = comp.inbuf[src_pos];
@@ -1062,18 +1063,18 @@ fn compress_normal(comp: *DeflateCompressor) bool {
                     comp.next[ins_pos & TDEFL_LZ_DICT_SIZE_MASK] = comp.hash[hash];
                     comp.hash[hash] = @truncate(@typeOf(comp.hash[0]), ins_pos);
                 }
-                warn("src_buf_left={}, lookahead_size={}\n",src_buf_left, comp.lookahead_size);
+                //warn("src_buf_left={}, lookahead_size={}\n",src_buf_left, comp.lookahead_size);
             }
         }
         comp.dict_size = MZ_MIN(usize, TDEFL_LZ_DICT_SIZE - comp.lookahead_size, comp.dict_size);
-        warn("dict_size={}\n", comp.dict_size);
+        //warn("dict_size={}\n", comp.dict_size);
         if ((flush == 0) and (comp.lookahead_size < TDEFL_MAX_MATCH_LEN)) {
-            warn("break flush={}, lookahead_size={}\n", flush, comp.lookahead_size);
+            //warn("break flush={}, lookahead_size={}\n", flush, comp.lookahead_size);
             break;
         }
 
         //* Simple lazy/greedy parsing state machine. */
-        warn("Simple lazy/greedy parsing state machine {}\n", comp.saved_match_len);
+        //warn("Simple lazy/greedy parsing state machine {}\n", comp.saved_match_len);
         len_to_move = 1;
         cur_match_dist = 0;
         if (comp.saved_match_len > 0) {
@@ -1111,7 +1112,7 @@ fn compress_normal(comp: *DeflateCompressor) bool {
         }
         if (comp.saved_match_len > 0) {
             if (cur_match_len > comp.saved_match_len) {
-                record_literal(comp, @truncate(u8, comp.saved_lit));
+                comp.record_literal(@truncate(u8, comp.saved_lit));
                 if (cur_match_len >= 128) {
                     record_match(comp, cur_match_len, cur_match_dist);
                     comp.saved_match_len = 0;
@@ -1127,7 +1128,7 @@ fn compress_normal(comp: *DeflateCompressor) bool {
                 comp.saved_match_len = 0;
             }
         } else if (cur_match_dist == 0) {
-            record_literal(comp, comp.dict[MZ_MIN(@typeOf(cur_pos), cur_pos, @sizeOf(@typeOf(comp.dict)) - 1)]);
+            comp.record_literal(comp.dict[MZ_MIN(@typeOf(cur_pos), cur_pos, @sizeOf(@typeOf(comp.dict)) - 1)]);
         } else if ((comp.greedy_parsing) or ((comp.flags & TDEFL_RLE_MATCHES) != 0) or (cur_match_len >= 128)) {
             record_match(comp, cur_match_len, cur_match_dist);
             len_to_move = cur_match_len;
@@ -1148,7 +1149,7 @@ fn compress_normal(comp: *DeflateCompressor) bool {
             comp.src_pos = src_pos;
             comp.src_buf_left = src_buf_left;
             const n = flush_block(comp, 0);
-            warn("flush_block returned {}\n", n);
+            //warn("flush_block returned {}\n", n);
             if (n != 0) {
                 //return (n < 0) ? MZ_FALSE : MZ_TRUE;
                 if (n < 0) {
@@ -1167,17 +1168,17 @@ fn compress_normal(comp: *DeflateCompressor) bool {
 }
 
 fn flush_output_buffer(comp: *DeflateCompressor) bool {
-    warn("flush_output_buffer: {} {} {} {}\n", comp.src_pos, comp.out_buf_size,
-         comp.out_buf_ofs, comp.output_flush_remaining);
+    //warn("flush_output_buffer: {} {} {} {}\n", comp.src_pos, comp.out_buf_size,
+    //     comp.out_buf_ofs, comp.output_flush_remaining);
     if (comp.in_buf_size > 0) {
         //*comp.pIn_buf_size = comp.src_pos - (const mz_uint8 *)comp.pIn_buf;
         comp.in_buf_size = comp.src_pos;
     }
     if (comp.out_buf_size > 0) {
         const n = MZ_MIN(usize, comp.out_buf_ofs, comp.output_flush_remaining);
-        warn("{} {} {}\n",  comp.out_buf_size, comp.out_buf_ofs,comp.output_flush_remaining );
+        //warn("{} {} {}\n",  comp.out_buf_size, comp.out_buf_ofs,comp.output_flush_remaining );
         //memcpy((mz_uint8 *)comp.pOut_buf + comp.out_buf_ofs, comp.output_buf + comp.output_flush_ofs, n);
-        warn("memcpy {} {} {}\n", comp.out_buf_ofs, comp.output_flush_ofs, n);
+        //warn("memcpy {} {} {}\n", comp.out_buf_ofs, comp.output_flush_ofs, n);
         var i: usize = 0;
         while (i < n) {
             comp.outbuf[i + comp.out_buf_ofs] = comp.output_buf[i + comp.output_flush_ofs];
@@ -1189,7 +1190,7 @@ fn flush_output_buffer(comp: *DeflateCompressor) bool {
 
         comp.out_buf_size = comp.out_buf_ofs;
     } else {
-        warn("no outbuf size\n");
+        //warn("no outbuf size\n");
     }
 
     //return (comp.finished && !comp.output_flush_remaining) ? TDEFL_STATUS_DONE : TDEFL_STATUS_OKAY;
