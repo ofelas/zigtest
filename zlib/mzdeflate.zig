@@ -523,9 +523,9 @@ pub const Huffman = struct {
         // }
 
         if (rle.repeat_count != 0) {
-            try rle.prev_code_size(packed_code_sizes_cursor, self);
+            try rle.prev_code_size(&packed_code_sizes_cursor, self);
         } else {
-            try rle.zero_code_size(packed_code_sizes_cursor, self);
+            try rle.zero_code_size(&packed_code_sizes_cursor, self);
         }
 
         self.tables[2].optimize_table(MAX_HUFF_SYMBOLS_2, 7, false);
@@ -861,6 +861,13 @@ fn Cursor(comptime T: type) type {
             }
             mem.writeInt(self.inner[self.pos..], value, endian);
         }
+
+        fn write_all(self: *Self, buf: []u8) void {
+            for (buf) |c| {
+                self.inner[self.pos] = c;
+                self.pos += 1;
+            }
+        }
     };
 }
 
@@ -982,7 +989,7 @@ pub const RLE = struct {
     pub repeat_count: u16,
     pub p_code_size: u8,
 
-    fn prev_code_size(self: *Self, packed_code_sizes: Cursor([]u8), h: *Huffman ) !void {
+    fn prev_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman ) !void {
         var counts = &h.tables[HUFF_CODES_TABLE].count;
         if (self.repeat_count != 0) {
             if (self.repeat_count < 3) {
@@ -995,18 +1002,21 @@ pub const RLE = struct {
                 //                         usize],
                 // )?;
                 // FAKE
+                var ary = []u8 {code, code, code};
+                packed_code_sizes.write_all(ary[0..self.repeat_count]);
                 if (self.repeat_count > 3) { return error.Fake; }
             } else {
                 counts[16] = counts[16] +% 1;
-                // packed_code_sizes.write_all(
-                //     &[16, (self.repeat_count - 3) as u8][..],
+                var ary = []u8 {16, @truncate(u8, (self.repeat_count - 3) & 0xff)};
+                packed_code_sizes.write_all(ary[0..]);
                 // )?;
+                
             }
             self.repeat_count = 0;
         }
     }
 
-    fn zero_code_size(self: *Self, packed_code_sizes: Cursor([]u8), h: *Huffman) !void {
+    fn zero_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman) !void {
         var counts = &h.tables[HUFF_CODES_TABLE].count;
         if (self.z_count != 0) {
             if (self.z_count < 3) {
