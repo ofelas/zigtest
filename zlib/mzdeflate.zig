@@ -184,6 +184,150 @@ const SymFreq = struct {
     sym_index: u16,
 };
 
+fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
+    var hist: [2][256]u16 = undefined;
+
+    for (symbols0) |freq| {
+        hist[0][(freq.key & 0xFF)] += 1;
+        hist[1][((freq.key >> 8) & 0xFF)] += 1;
+    }
+
+    var n_passes: u4 = 2;
+    if (symbols0.len == hist[1][0]) {
+        n_passes -= 1;
+    }
+
+    var current_symbols = symbols0;
+    var new_symbols = symbols1;
+
+    var pass: u4 = 0;
+    // for pass in 0..n_passes {
+    while (pass > n_passes) : (pass += 1) {
+        var offsets = []usize {0} ** 256;
+        var offset: usize = 0;
+        var i: usize = 0;
+        // for i in 0..256 {
+        while (i < 256) : (i += 1) {
+            offsets[i] = offset;
+            offset += hist[pass][i];
+        }
+
+        for (current_symbols) |sym| {
+            const j: usize = ((sym.key >> (pass * 8)) & 0xFF);
+            new_symbols[offsets[j]] = sym;
+            offsets[j] += 1;
+        }
+
+        // mem::swap(&mut current_symbols, &mut new_symbols);
+        var t = current_symbols;
+        current_symbols = new_symbols;
+        new_symbols = t;
+    }
+
+    return current_symbols;
+}
+
+fn calculate_minimum_redundancy(symbols: []SymFreq) void {
+    switch(symbols.len) {
+        0 => {},
+        1 => {
+            symbols[0].key = 1;
+        },
+        else => |n| {
+            symbols[0].key += symbols[1].key;
+            var root: usize = 0;
+            var leaf: usize = 2;
+            var next: usize = 1;
+            // for next in 1..n - 1 {
+            while (next < (n - 1)) : (next += 1) {
+                if ((leaf >= n) or (symbols[root].key < symbols[leaf].key)) {
+                    symbols[next].key = symbols[root].key;
+                    symbols[root].key = truncmask(u16, next);
+                    root += 1;
+                } else {
+                    symbols[next].key = symbols[leaf].key;
+                    leaf += 1;
+                }
+
+                if ((leaf >= n) or ((root < next) and (symbols[root].key < symbols[leaf].key))) {
+                    symbols[next].key = symbols[next].key +% symbols[root].key;
+                    symbols[root].key = truncmask(u16, next);
+                    root += 1;
+                } else {
+                    symbols[next].key = symbols[next].key +% symbols[leaf].key;
+                    leaf += 1;
+                }
+            }
+
+            symbols[n - 2].key = 0;
+            // for next in (0..n - 2).rev() {
+            //     symbols[next].key = symbols[symbols[next].key as usize].key + 1;
+            // }
+
+            var avbl: usize = 1;
+            var used: usize = 0;
+            var dpth: usize = 0;
+            root = (n - 2);
+            next = (n - 1);
+            while (avbl > 0) {
+                while ((root >= 0) and (symbols[root].key == dpth)) {
+                    used += 1;
+                    if (root > 0) {
+                        root -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                while (avbl > used) {
+                    symbols[next].key = truncmask(u16, dpth);
+                    next -= 1;
+                    avbl -= 1;
+                }
+                avbl = 2 * used;
+                dpth += 1;
+                used = 0;
+            }
+        }
+    }
+}
+
+fn enforce_max_code_size(num_codes: []u32, code_list_len: usize, max_code_size: usize) void {
+    if (code_list_len <= 1) {
+        return;
+    }
+
+    // num_codes[max_code_size] += num_codes[max_code_size + 1..].iter().sum::<i32>();
+    for (num_codes[max_code_size + 1..]) |v| {
+        num_codes[max_code_size] += v;
+    }
+    // let total = num_codes[1..max_code_size + 1]
+    //     .iter()
+    //     .rev()
+    //     .enumerate()
+    //     .fold(0u32, |total, (i, &x)| total + ((x as u32) << i));
+    var i: usize = max_code_size + 1;
+    var total: u32 = 0;
+    while (i > 0) {
+        total += (num_codes[i] << truncmask(u5, i));
+    }
+
+    // for _ in (1 << max_code_size)..total {
+    var x = (usize(1) << truncmask(u6, max_code_size));
+    warn("x={}, total={}\n", x, total);
+    while (x < total) {
+        num_codes[max_code_size] -= 1;
+        i = max_code_size - 1;
+        // for i in (1..max_code_size).rev() {
+        while (i > 0) : (i -= 1) {
+            if (num_codes[i] != 0) {
+                num_codes[i] -= 1;
+                num_codes[i + 1] += 2;
+                break;
+            }
+        }
+    }
+}
+
 /// Compression callback function type.
 //pub type PutBufFuncPtrNotNull = unsafe extern "C" fn(*const c_void, c_int, *mut c_void) -> bool;
 /// `Option` alias for compression callback function type.
@@ -356,49 +500,45 @@ pub const HuffmanEntry = struct {
                 num_codes[code_size] += 1;
             }
         } else {
-            // let mut symbols0 = [SymFreq {
-            //     key: 0,
-            //     sym_index: 0,
-            // }; MAX_HUFF_SYMBOLS];
-            // let mut symbols1 = [SymFreq {
-            //     key: 0,
-            //     sym_index: 0,
-            // }; MAX_HUFF_SYMBOLS];
-
-            // let mut num_used_symbols = 0;
+            var symbols0 = []SymFreq { SymFreq {.key = 0, .sym_index = 0} } ** MAX_HUFF_SYMBOLS;
+            var symbols1 = []SymFreq { SymFreq {.key = 0, .sym_index = 0} } ** MAX_HUFF_SYMBOLS;
+            var num_used_symbols: usize = 0;
             // for i in 0..table_len {
-            //     if self.count[table_num][i] != 0 {
-            //         symbols0[num_used_symbols] = SymFreq {
-            //             key: self.count[table_num][i],
-            //             sym_index: i as u16,
-            //         };
-            //         num_used_symbols += 1;
-            //     }
-            // }
+            var i: usize = 0;
+            while (i < table_len) : (i += 1) {
+                if (self.count[i] != 0) {
+                    symbols0[num_used_symbols] = SymFreq {
+                         .key = self.count[i],
+                         .sym_index = truncmask(u16, i),
+                    };
+                    num_used_symbols += 1;
+                }
+            }
 
-            // let symbols = Self::radix_sort_symbols(
-            //     &mut symbols0[..num_used_symbols],
-            //     &mut symbols1[..num_used_symbols],
-            // );
-            // Self::calculate_minimum_redundancy(symbols);
+            const symbols = radix_sort_symbols(symbols0[0..num_used_symbols],
+                                               symbols1[0..num_used_symbols]);
 
-            // for symbol in symbols.iter() {
-            //     num_codes[symbol.key as usize] += 1;
-            // }
+            calculate_minimum_redundancy(symbols);
 
-            // Self::enforce_max_code_size(&mut num_codes, num_used_symbols, code_size_limit);
+            for (symbols) |symbol| {
+                num_codes[symbol.key] += 1;
+            }
 
-            // memset(&mut self.code_sizes[table_num][..], 0);
-            // memset(&mut self.codes[table_num][..], 0);
+            enforce_max_code_size(num_codes[0..], num_used_symbols, code_size_limit);
 
-            // let mut last = num_used_symbols;
-            // for i in 1..code_size_limit + 1 {
-            //     let first = last - num_codes[i] as usize;
-            //     for symbol in &symbols[first..last] {
-            //         self.code_sizes[table_num][symbol.sym_index as usize] = i as u8;
-            //     }
-            //     last = first;
-            // }
+            setmem(u6, self.code_sizes[0..], 0);
+            setmem(u16, self.codes[0..], 0);
+
+            var last = num_used_symbols;
+            i = 1;
+            while (i < (code_size_limit + 1)) {
+                // for i in 1..code_size_limit + 1 {
+                const first: usize = last - num_codes[i];
+                for (symbols[first..last]) |symbol| {
+                    self.code_sizes[symbol.sym_index] = truncmask(u6, i);
+                }
+                last = first;
+            }
         }
 
         var j: u32 = 0;
@@ -632,8 +772,14 @@ pub const LocalBuf = struct {
 };
 
 const MatchResult = struct {
+    const Self = this;
     distance: u32,
     length: u32,
+
+    fn dump(self: *const Self) void {
+        warn("MatchResult distance={}, length={}\n",
+             self.distance, self.length);
+    }
 };
 
 const Dictionary = struct {
@@ -668,7 +814,7 @@ const Dictionary = struct {
     fn read_unaligned(self: *Self, comptime T: type, pos: usize) T {
         //ptr::read_unaligned((&self.b.dict as *const [u8] as *const u8).offset(pos) as
         //                    *const T)
-        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.Endian.Little);
+        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.Endian.Big);
     }
 
     /// Try to find a match for the data at lookahead_pos in the dictionary that is
@@ -687,6 +833,7 @@ const Dictionary = struct {
         var max_match_len = MIN(u32, MAX_MATCH_LEN, amax_match_len);
         var match_len = MAX(u32, amatch_len, 1);
         var match_dist = amatch_dist;
+        var i: usize = 0;
 
         const pos = (lookahead_pos & LZ_DICT_SIZE_MASK);
         var probe_pos = pos;
@@ -722,30 +869,32 @@ const Dictionary = struct {
                 }
 
                 // for _ in 0..3 {
-                //     let next_probe_pos = self.b.next[probe_pos as usize] as u32;
+                i = 0;
+                while (i < 3) : (i += 1) {
+                    const next_probe_pos: u32 = self.b.next[probe_pos];
 
-                //     dist = ((lookahead_pos - next_probe_pos) & 0xFFFF) as u32;
-                //     if next_probe_pos == 0 || dist > max_dist {
-                //         // We reached the end of the hash chain, or the next value is further away
-                //         // than the maximum allowed distance, so return the best match we found, if
-                //         // any.
-                //         return (match_dist, match_len);
-                //     }
+                    dist = ((lookahead_pos - next_probe_pos) & 0xFFFF);
+                    if ((next_probe_pos == 0) or (dist > max_dist)) {
+                        // We reached the end of the hash chain, or the next value is further away
+                        // than the maximum allowed distance, so return the best match we found, if
+                        // any.
+                        return MatchResult {.distance = match_dist, .length = match_len};
+                    }
 
-                //     // Mask the position value to get the position in the hash chain of the next
-                //     // position to match against.
-                //     probe_pos = next_probe_pos & LZ_DICT_SIZE_MASK;
-                //     // # Unsafe
-                //     // See the beginning of this function.
-                //     // probe_pos and match_length are still both bounded.
-                //     unsafe {
-                //         // The first two bytes, last byte and the next byte matched, so
-                //         // check the match further.
-                //         if self.read_unaligned::<u16>((probe_pos + match_len - 1) as isize) == c01 {
-                //             break :found;
-                //         }
-                //     }
-                // }
+                    // Mask the position value to get the position in the hash chain of the next
+                    // position to match against.
+                    probe_pos = next_probe_pos & LZ_DICT_SIZE_MASK;
+                    // # Unsafe
+                    // See the beginning of this function.
+                    // probe_pos and match_length are still both bounded.
+                    //     unsafe {
+                    // The first two bytes, last byte and the next byte matched, so
+                    // check the match further.
+                    if (self.read_unaligned(u16, (probe_pos + match_len - 1)) == c01) {
+                        break :found;
+                    }
+                    //     }
+                }
             }
 
             if (dist == 0) {
@@ -763,7 +912,7 @@ const Dictionary = struct {
             var p = pos + 2;
             var q = probe_pos + 2;
             // Check the length of the match.
-            var i: usize = 0;
+            i = 0;
             while (i < 32) : (i += 1) {
                 // # Unsafe
                 // This loop has a fixed counter, so p_data and q_data will never be
@@ -783,7 +932,7 @@ const Dictionary = struct {
                     const probe_len = p - pos + (trailing >> 3);
                     if (probe_len > match_len) {
                         match_dist = dist;
-                        match_len = MIN(max_match_len, probe_len);
+                        match_len = MIN(u32, max_match_len, probe_len);
                         if (match_len == max_match_len) {
                             return MatchResult{.distance = match_dist, .length = match_len};
                         }
@@ -797,7 +946,7 @@ const Dictionary = struct {
                 }
             }
 
-            return MatchResult{.distance = dist, .length = MIN(usize, max_match_len, MAX_MATCH_LEN)};
+            return MatchResult{.distance = dist, .length = MIN(u32, max_match_len, MAX_MATCH_LEN)};
         }
     }
 
@@ -862,7 +1011,10 @@ fn Cursor(comptime T: type) type {
             mem.writeInt(self.inner[self.pos..], value, endian);
         }
 
-        fn write_all(self: *Self, buf: []u8) void {
+        fn write_all(self: *Self, buf: []u8) !void {
+            if ((self.pos + buf.len) >= self.inner.len) {
+                return error.NoSpace;
+            }
             for (buf) |c| {
                 self.inner[self.pos] = c;
                 self.pos += 1;
@@ -889,14 +1041,15 @@ const OutputBuffer = struct {
     fn put_bits(self: *Self, bits: u32, length: u32) void {
         // assert!(bits <= ((1u32 << len) - 1u32));
         self.bit_buffer |= bits << self.bits_in;
-        // self.bits_in += len;
-        // while self.bits_in >= 8 {
-        //     let pos = self.inner.position();
-        //     self.inner.get_mut()[pos as usize] = self.bit_buffer as u8;
-        //     self.inner.set_position(pos + 1);
-        //     self.bit_buffer >>= 8;
-        //     self.bits_in -= 8;
-        // }
+        self.bits_in += truncmask(u5, length);
+        while (self.bits_in >= 8) {
+            const pos = self.inner.position();
+            // .get_mut()
+            self.inner.inner[pos] = truncmask(u8, self.bit_buffer);
+            self.inner.set_position(pos + 1);
+            self.bit_buffer >>= 8;
+            self.bits_in -= 8;
+        }
     }
 
     fn save(self: *Self) SavedOutputBuffer {
@@ -1001,16 +1154,12 @@ pub const RLE = struct {
                 //     &[code, code, code][..self.repeat_count as
                 //                         usize],
                 // )?;
-                // FAKE
                 var ary = []u8 {code, code, code};
-                packed_code_sizes.write_all(ary[0..self.repeat_count]);
-                if (self.repeat_count > 3) { return error.Fake; }
+                try packed_code_sizes.write_all(ary[0..self.repeat_count]);
             } else {
                 counts[16] = counts[16] +% 1;
                 var ary = []u8 {16, @truncate(u8, (self.repeat_count - 3) & 0xff)};
-                packed_code_sizes.write_all(ary[0..]);
-                // )?;
-                
+                try packed_code_sizes.write_all(ary[0..]);
             }
             self.repeat_count = 0;
         }
@@ -1024,18 +1173,22 @@ pub const RLE = struct {
                 // packed_code_sizes.write_all(
                 //     &[0, 0, 0][..self.z_count as usize],
                 // )?;
-                // FAKE
-                if (self.repeat_count > 3) { return error.Fake; }
+                var ary = []u8 {0,0,0};
+                try packed_code_sizes.write_all(ary[0..self.z_count]);
             } else if (self.z_count <= 10) {
                 counts[17] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[17, (self.z_count - 3) as u8][..],
                 // )?;
+                var ary = []u8 {17, truncmask(u8, self.z_count - 3)};
+                try packed_code_sizes.write_all(ary[0..]);
             } else {
                 counts[18] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[18, (self.z_count - 11) as u8][..],
                 // )?;
+                var ary = []u8 {18, truncmask(u8, self.z_count - 11)};
+                try packed_code_sizes.write_all(ary[0..]);
             }
             self.z_count = 0;
         }
@@ -1560,6 +1713,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
         if (d.params.flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) {
             if ((d.dict.size != 0) and ((d.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) == 0)) {
                 const c = d.dict.b.dict[((cur_pos -% 1) & LZ_DICT_SIZE_MASK)];
+                warn("NOT implemented\n");
                 // cur_match_len = d.dict.b.dict[cur_pos..(cur_pos + lookahead_size)]
                 //     .iter()
                 //     .take_while(|&x| *x == c)
@@ -1578,6 +1732,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
                 cur_match_dist,
                 cur_match_len,
             );
+            dist_len.dump();
             cur_match_dist = dist_len.distance;
             cur_match_len = dist_len.length;
         }
@@ -1676,15 +1831,20 @@ pub fn compress(d: *Compressor, in_buf: []u8, out_buf: []u8,
     return compress_inner(d, &callback, flush);
 }
 
+inline fn truncmask(comptime T: type, value: var) T {
+    return @truncate(T, value & @maxValue(T));
+}
+
 fn flush_output_buffer(cb: *Callback, p: *Params) ReturnTuple {
     var res = ReturnTuple.new(TDEFLStatus.Okay, p.src_pos, 0);
     //if let CallbackOut::Buf(ref mut cb) = c.out {
     const n = MIN(usize, cb.out.len - p.out_buf_ofs, p.flush_remaining);
-    // if n != 0 {
-    //     (&mut cb.out_buf[p.out_buf_ofs..p.out_buf_ofs + n])
-    //         .copy_from_slice(&p.local_buf.b[p.flush_ofs as usize..p.flush_ofs as usize + n]);
-    // }
-    const nn = @truncate(u32, n & @maxValue(u32));
+    warn("flush_output_buffer n={}\n", n);
+    if (n != 0) {
+        //     (&mut cb.out_buf[p.out_buf_ofs..p.out_buf_ofs + n])
+        //         .copy_from_slice(&p.local_buf.b[p.flush_ofs as usize..p.flush_ofs as usize + n]);
+    }
+    const nn = truncmask(u32, n);
     p.flush_ofs += nn;
     p.flush_remaining -= nn;
     p.out_buf_ofs += nn;
@@ -1711,7 +1871,8 @@ fn compress_inner(d: *Compressor, callback: *Callback,
     d.params.flush = flush;
     if (!prev_ok or !flush_finish_once) {
         d.params.prev_return_status = TDEFLStatus.BadParam;
-        return ReturnTuple.new(d.params.prev_return_status, 0, 0);
+        res = ReturnTuple.new(d.params.prev_return_status, 0, 0);
+        return res;
     }
 
     if ((d.params.flush_remaining != 0) or d.params.finished) {
@@ -1746,6 +1907,7 @@ fn compress_inner(d: *Compressor, callback: *Callback,
     if (!flush_none and (d.dict.lookahead_size == 0) and !remaining) {
         flush = d.params.flush;
         var x = flush_block(d, callback, flush);
+        warn("## x={}\n", x);
         // match  {
         //     Err(_) => {
         //         d.params.prev_return_status = TDEFLStatus::PutBufFailed;
@@ -1780,14 +1942,6 @@ fn compress_inner(d: *Compressor, callback: *Callback,
 }
 
 
-test "Compressor" {
-    var c = Compressor.new(0);
-    var input = "Deflate late";
-    var output = []u8 {0} ** 1024;
-    var r = compress(&c, input[0..], output[0..], TDEFLFlush.Finish);
-    warn("done..\n");
-}
-
 test "Write U16" {
     var slice = [2]u8 {0, 0};
     write_u16_le(0x07d0, slice[0..], 0);
@@ -1812,4 +1966,13 @@ test "Read U16" {
 //     warn("sizeof Huffman={}\n", usize(@sizeOf(Huffman)));
 //     h.start_static_block();
 // }
+
+test "Compressor" {
+    var c = Compressor.new(0);
+    var input = "Deflate late";
+    warn("Compressing '{}'\n", input);
+    var output = []u8 {0} ** 1024;
+    var r = compress(&c, input[0..], output[0..], TDEFLFlush.Finish);
+    warn("done..{}\n", @enumToInt(builtin.mode));
+}
 
