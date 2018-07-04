@@ -30,6 +30,10 @@ inline fn MAX(comptime T: type, a: T, b: T) T {
     }
 }
 
+inline fn truncmask(comptime T: type, value: var) T {
+    return @truncate(T, value & @maxValue(T));
+}
+
 //use std::io::{self, Cursor, Seek, SeekFrom, Write};
 
 //use super::CompressionLevel;
@@ -471,7 +475,7 @@ fn write_u16_le_uc(val: u16, slice: []u8, pos: usize) void {
 fn read_u16_le(slice: []u8, pos: usize) u16 {
     assert(pos + 1 < slice.len);
     assert(pos < slice.len);
-    return mem.readInt(slice[pos..], u16, builtin.Endian.Little);
+    return mem.readInt(slice[pos..pos+@sizeOf(u16)], u16, builtin.Endian.Little);
 }
 
 /// A struct containing data about huffman codes and symbol frequencies.
@@ -553,7 +557,7 @@ pub const HuffmanEntry = struct {
         i = 0;
         while (i < table_len) : (i += 1) {
             const code_size = self.code_sizes[i];
-            warn("i={}, code_size={}\n", i, code_size);
+            //DEBUG warn("i={}, code_size={}\n", i, code_size);
             if (code_size == 0) {
                 continue;
             }
@@ -585,6 +589,7 @@ pub const Huffman = struct {
     tables: [MAX_HUFF_TABLES]HuffmanEntry,
 
     fn start_static_block(self: *Self, output: *OutputBuffer) void {
+        warn("start_static_block\n");
         setmem(u6, self.tables[LITLEN_TABLE].code_sizes[0..144], 8);
         setmem(u6, self.tables[LITLEN_TABLE].code_sizes[144..256], 9);
         setmem(u6, self.tables[LITLEN_TABLE].code_sizes[256..280], 7);
@@ -599,6 +604,7 @@ pub const Huffman = struct {
     }
 
     fn start_dynamic_block(self: *Self, output: *OutputBuffer) !void {
+        warn("start_dynamic_block\n");
         // There will always be one, and only one end of block code.
         self.tables[0].count[256] = 1;
 
@@ -986,10 +992,10 @@ fn Cursor(comptime T: type) type {
         fn seek(self: *Self, style: SeekFrom) !void {
             switch (style) {
                 SeekFrom.Start => |dist| {
-                    warn("Seeking from current {}\n", dist);
+                    warn("Seeking from start {}\n", dist);
                 },
                 SeekFrom.End => |dist| {
-                    warn("Seeking from current {}\n", dist);
+                    warn("Seeking from end {}\n", dist);
                 },
                 SeekFrom.Current => |dist| {
                     warn("Seeking from current {}\n", dist);
@@ -1009,7 +1015,7 @@ fn Cursor(comptime T: type) type {
         }
 
         fn writeInt(self: *Self, value: u64, endian: builtin.Endian) !void {
-            if ((self.inner.len - self.pos) < @sizeOf(@typeOf(value))) {
+            if ((self.inner.len - self.pos) <= @sizeOf(u64)) {
                 return error.NoSpaceLeft;
             }
             mem.writeInt(self.inner[self.pos..], value, endian);
@@ -1102,10 +1108,16 @@ test "outputbuffer and bitbuffer" {
 }
 
 const SavedOutputBuffer = struct {
+    const Self = this;
     pub pos: u64,
     pub bit_buffer: u32,
     pub bits_in: u5,
     pub local: bool,
+
+    fn dump(self: *const Self) void {
+        warn("SavedOutputBuffer pos={}, bit_buffer={x08}, bits_in={}, local={}\n",
+             self.pos, self.bit_buffer, self.bits_in, self.local);
+    }
 };
 
 const BitBuffer = struct {
@@ -1125,6 +1137,7 @@ const BitBuffer = struct {
 
     fn flush(self: *Self, output: *OutputBuffer) !void {
         var pos = output.inner.position();
+        warn("BitBuffer flush pos={}\n", pos);
         //var inner = &mut ((*output.inner.get_mut())[pos]) as *mut u8 as *mut u64;
         // # Unsafe
         // TODO: check unsafety
@@ -1340,6 +1353,11 @@ const Callback = struct {
     out_buf_size: usize,
     out: []u8,
 
+    fn dump(self: *Self) void {
+        warn("Callback: in_buf_size={}, out_but_size={}\n",
+             self.in_buf_size, self.out_buf_size);
+    }
+
     fn new_callback_buf(in_buf: []u8, out_buf: []u8) Self {
         return Callback {
             .in_buf = in_buf,
@@ -1359,14 +1377,14 @@ const Callback = struct {
         //         &mut cb.out_buf[out_buf_ofs..out_buf_ofs + buf_len]
         //     }
         //     _ => {
-        //         is_local = true;
-        //         &mut local_buf[..buf_len]
+        is_local = true;
+        var chosen_buffer = local_buf[0..buf_len];
         //     }
         // };
 
         // let cursor = Cursor::new(chosen_buffer);
         return OutputBuffer {
-            .inner = Cursor([]u8) {.pos = 0, .inner = local_buf},
+            .inner = Cursor([]u8) {.pos = 0, .inner = chosen_buffer},
             .local = is_local,
             .bit_buffer = 0,
             .bits_in = 0,
@@ -1383,6 +1401,8 @@ const Callback = struct {
     }
 
     fn flush_output(self: *Self, saved_output: SavedOutputBuffer, params: *Params) !u32 {
+        warn("flush_output()\n");
+        saved_output.dump();
         if (saved_output.pos == 0) {
             return params.flush_remaining;
         }
@@ -1392,9 +1412,28 @@ const Callback = struct {
         //     CallbackOut::Func(ref mut cf) => cf.flush_output(saved_output, params),
         //     CallbackOut::Buf(ref mut cb) => cb.flush_output(saved_output, params),
         // }
+        if (saved_output.local) {
+            warn("local\n");
+            // let n = cmp::min(
+            //     saved_output.pos as usize,
+            //     self.out_buf.len() - params.out_buf_ofs,
+            // );
+            // (&mut self.out_buf[params.out_buf_ofs..params.out_buf_ofs + n])
+            //     .copy_from_slice(&params.local_buf.b[..n]);
+
+            // params.out_buf_ofs += n;
+            // if saved_output.pos != n as u64 {
+            //     params.flush_ofs = n as u32;
+            //     params.flush_remaining = (saved_output.pos - n as u64) as u32;
+            // }
+        } else {
+            warn("not local\n");
+            params.out_buf_ofs += saved_output.pos;
+        }
+
         // FAKE
         if (saved_output.pos == 0) { return error.Fake; }
-        return 0;
+        return params.flush_remaining;
     }
 };
 
@@ -1419,7 +1458,7 @@ fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !
             var sym: usize = 0;
             var num_extra_bits: u6 = 0;
 
-            var match_len = usize(lz_code_buf[i]);
+            var match_len: usize = lz_code_buf[i];
 
             var match_dist = usize(read_u16_le(lz_code_buf, i + 1));
 
@@ -1503,6 +1542,7 @@ fn compress_block(huff: *Huffman, output: *OutputBuffer, lz: *LZ,
 fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
     var saved_buffer: SavedOutputBuffer = undefined;
     {
+        callback.dump();
         var output = callback.new_output_buffer(
             &d.params.local_buf.b,
             d.params.out_buf_ofs,
@@ -1651,6 +1691,7 @@ fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
 }
 
 fn compress_normal(d: *Compressor, callback: *Callback) bool {
+    callback.dump();
     var src_pos = d.params.src_pos;
     var in_buf = callback.in_buf;
 
@@ -1851,16 +1892,13 @@ pub fn compress(d: *Compressor, in_buf: []u8, out_buf: []u8,
     return compress_inner(d, &callback, flush);
 }
 
-inline fn truncmask(comptime T: type, value: var) T {
-    return @truncate(T, value & @maxValue(T));
-}
-
 fn flush_output_buffer(cb: *Callback, p: *Params) ReturnTuple {
     var res = ReturnTuple.new(TDEFLStatus.Okay, p.src_pos, 0);
     //if let CallbackOut::Buf(ref mut cb) = c.out {
     const n = MIN(usize, cb.out.len - p.out_buf_ofs, p.flush_remaining);
+    cb.dump();
     warn("flush_output_buffer n={}\n", n);
-    if (n != 0) {
+    if (n > 0) {
         //     (&mut cb.out_buf[p.out_buf_ofs..p.out_buf_ofs + n])
         //         .copy_from_slice(&p.local_buf.b[p.flush_ofs as usize..p.flush_ofs as usize + n]);
     }
@@ -1907,8 +1945,8 @@ fn compress_inner(d: *Compressor, callback: *Callback,
         (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) !=
         0;
 
-    // const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
-    //     compress_fast(d, callback) else compress_normal(d, callback);
+    //const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
+    //    compress_fast(d, callback) else compress_normal(d, callback);
 
     const compress_success = compress_normal(d, callback);
     if (!compress_success) {
@@ -1921,13 +1959,15 @@ fn compress_inner(d: *Compressor, callback: *Callback,
         }
     //}
 
+    callback.dump();
+
     const flush_none = (d.params.flush == TDEFLFlush.None);
     const in_left = 0; //callback.in_buf.map_or(0, |buf| buf.len()) - d.params.src_pos;
     const remaining = (in_left != 0) or (d.params.flush_remaining != 0);
     if (!flush_none and (d.dict.lookahead_size == 0) and !remaining) {
         flush = d.params.flush;
-        var x = flush_block(d, callback, flush);
-        warn("## x={}\n", x);
+        var n: error!u32 = flush_block(d, callback, flush);
+        warn("n={}\n", n);
         // match  {
         //     Err(_) => {
         //         d.params.prev_return_status = TDEFLStatus::PutBufFailed;
@@ -1945,14 +1985,15 @@ fn compress_inner(d: *Compressor, callback: *Callback,
         //         )
         //     }
         //     _ => {
-        //         d.params.finished = d.params.flush == TDEFLFlush::Finish;
-        //         if d.params.flush == TDEFLFlush::Full {
+        d.params.finished = d.params.flush == TDEFLFlush.Finish;
+        if (d.params.flush == TDEFLFlush.Full) {
+            warn("full flush\n");
         //             memset(&mut d.dict.b.hash[..], 0);
         //             memset(&mut d.dict.b.next[..], 0);
         //             d.dict.size = 0;
         //         }
         //     }
-        // }
+        }
     }
 
     res = flush_output_buffer(callback, &d.params);
