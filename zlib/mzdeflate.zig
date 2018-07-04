@@ -437,7 +437,7 @@ const MAX_HUFF_SYMBOLS_2 = 19;
 /// Size of the chained hash table.
 pub const LZ_DICT_SIZE = 32768;
 /// Mask used when stepping through the hash chains.
-const LZ_DICT_SIZE_MASK = 32767; //LZ_DICT_SIZE as u32 - 1;
+const LZ_DICT_SIZE_MASK = LZ_DICT_SIZE - 1;
 /// The minimum length of a match.
 const MIN_MATCH_LEN = 3;
 /// The maximum length of a match.
@@ -775,10 +775,11 @@ const MatchResult = struct {
     const Self = this;
     distance: u32,
     length: u32,
+    loc: u8,
 
     fn dump(self: *const Self) void {
-        warn("MatchResult distance={}, length={}\n",
-             self.distance, self.length);
+        warn("MatchResult distance={}, length={}, loc={}\n",
+             self.distance, self.length, self.loc);
     }
 };
 
@@ -842,7 +843,7 @@ const Dictionary = struct {
 
         // If we already have a match of the full length don't bother searching for another one.
         if (max_match_len <= match_len) {
-            return MatchResult{.distance = match_dist, .length = match_len};
+            return MatchResult{.distance = match_dist, .length = match_len, .loc = 0};
         }
 
         // Read the last byte of the current match, and the next one, used to compare matches.
@@ -861,11 +862,12 @@ const Dictionary = struct {
         outer: while (true) {
             var dist: u32 = 0;
             found: while (true) {
+                warn("num_probes_left={}\n", num_probes_left);
                 num_probes_left -= 1;
                 if (num_probes_left == 0) {
                     // We have done as many probes in the hash chain as the current compression
                     // settings allow, so return the best match we found, if any.
-                    return MatchResult{.distance = match_dist, .length = match_len};
+                    return MatchResult{.distance = match_dist, .length = match_len, .loc = 1};
                 }
 
                 // for _ in 0..3 {
@@ -878,7 +880,7 @@ const Dictionary = struct {
                         // We reached the end of the hash chain, or the next value is further away
                         // than the maximum allowed distance, so return the best match we found, if
                         // any.
-                        return MatchResult {.distance = match_dist, .length = match_len};
+                        return MatchResult {.distance = match_dist, .length = match_len, .loc = 2};
                     }
 
                     // Mask the position value to get the position in the hash chain of the next
@@ -891,6 +893,7 @@ const Dictionary = struct {
                     // The first two bytes, last byte and the next byte matched, so
                     // check the match further.
                     if (self.read_unaligned(u16, (probe_pos + match_len - 1)) == c01) {
+                        warn("break 0x{x04} found\n", c01);
                         break :found;
                     }
                     //     }
@@ -898,7 +901,7 @@ const Dictionary = struct {
             }
 
             if (dist == 0) {
-                return MatchResult{.distance = match_dist, .length = match_len};
+                return MatchResult{.distance = match_dist, .length = match_len, .loc = 3};
             }
             // # Unsafe
             // See the beginning of this function.
@@ -934,7 +937,7 @@ const Dictionary = struct {
                         match_dist = dist;
                         match_len = MIN(u32, max_match_len, probe_len);
                         if (match_len == max_match_len) {
-                            return MatchResult{.distance = match_dist, .length = match_len};
+                            return MatchResult{.distance = match_dist, .length = match_len, .loc = 4};
                         }
                         // # Unsafe
                         // pos is bounded by masking.
@@ -946,7 +949,8 @@ const Dictionary = struct {
                 }
             }
 
-            return MatchResult{.distance = dist, .length = MIN(u32, max_match_len, MAX_MATCH_LEN)};
+            return MatchResult{.distance = dist, .length = MIN(u32, max_match_len, MAX_MATCH_LEN),
+                               .loc = 5};
         }
     }
 
@@ -1369,12 +1373,21 @@ const Callback = struct {
         };
     }
 
+    fn update_size(self: *Self, in_size: ?usize, out_size: ?usize) void {
+        if (in_size) |isz| {
+            self.in_buf_size = isz;
+        }
+        if (out_size) |osz| {
+            self.out_buf_size = osz;
+        }
+    }
+
     fn flush_output(self: *Self, saved_output: SavedOutputBuffer, params: *Params) !u32 {
         if (saved_output.pos == 0) {
             return params.flush_remaining;
         }
 
-        // self.update_size(Some(params.src_pos), None);
+        self.update_size(params.src_pos, null);
         // match self.out {
         //     CallbackOut::Func(ref mut cf) => cf.flush_output(saved_output, params),
         //     CallbackOut::Buf(ref mut cb) => cb.flush_output(saved_output, params),
@@ -1602,6 +1615,7 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
 }
 
 fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
+    warn("record_literal(*, {c}/{x})", lit, lit);
     lz.total_bytes += 1;
     lz.write_code(lit);
 
@@ -1612,6 +1626,7 @@ fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
 }
 
 fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
+    warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
     var match_len = pmatch_len;
     var match_dist = pmatch_dist;
     assert(match_len >= MIN_MATCH_LEN);
@@ -1651,7 +1666,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             MIN(u32, @truncate(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
 
         if ((lookahead_size + d.dict.size) >= (MIN_MATCH_LEN - 1) and (num_bytes_to_process > 0)) {
-            var dictb = d.dict.b;
+            var dictb = &d.dict.b;
 
             var dst_pos = (lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK;
             var ins_pos = lookahead_pos + lookahead_size - 2;
@@ -1675,17 +1690,20 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             }
             src_pos += num_bytes_to_process;
         } else {
-            var dictb = d.dict.b;
+            var dictb = &d.dict.b;
             for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
                 const dst_pos = (lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK;
                 dictb.dict[dst_pos] = c;
+                warn("c={c}, dst_pos={}\n", c, dst_pos);
                 if (dst_pos < (MAX_MATCH_LEN - 1)) {
                      dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
+                    warn("c={c}, dst_pos={}\n", c, dst_pos + LZ_DICT_SIZE);
                 }
 
                 lookahead_size += 1;
                 if ((lookahead_size + d.dict.size) >= MIN_MATCH_LEN) {
                     const ins_pos = lookahead_pos + lookahead_size - 3;
+                    warn("ins_pos={}\n", ins_pos);
                     const hash =
                         ((u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
                           (LZ_HASH_SHIFT * 2)) ^
@@ -1744,6 +1762,8 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             cur_match_len = 0;
         }
 
+        warn("cur_match_len={}, saved_match_len={}, saved_match_dist={}\n",
+             cur_match_len, saved_match_len, saved_match_dist);
         if (saved_match_len != 0) {
             if (cur_match_len > saved_match_len) {
                 record_literal(&d.huff, &d.lz, saved_lit);
@@ -1968,7 +1988,7 @@ test "Read U16" {
 // }
 
 test "Compressor" {
-    var c = Compressor.new(0);
+    var c = Compressor.new(9);
     var input = "Deflate late";
     warn("Compressing '{}'\n", input);
     var output = []u8 {0} ** 1024;

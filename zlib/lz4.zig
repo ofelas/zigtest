@@ -61,7 +61,7 @@ const Encoder = struct {
     ///
     /// This returns `false` if all the input bytes are processed.
     fn go_forward(self: *Self, steps: usize) bool {
-        warn("go_forward({})\n", steps);
+        //DEBUG: warn("go_forward({})\n", steps);
         // Go over all the bytes we are skipping and update the cursor and dictionary.
         var i: usize = 0;
         //assert((self.curpos + steps) <= self.input.len);
@@ -77,7 +77,7 @@ const Encoder = struct {
     }
 
     /// Insert the batch under the cursor into the dictionary.
-    fn insert_cursor(self: *Self) void {
+    inline fn insert_cursor(self: *Self) void {
         // Make sure that there is at least one batch remaining.
         if (self.remaining_batch()) {
             // Insert the cursor into the table.
@@ -86,7 +86,7 @@ const Encoder = struct {
     }
 
     /// Check if there are any remaining batches.
-    fn remaining_batch(self: *Self) bool {
+    inline fn remaining_batch(self: *Self) bool {
         return (self.curpos + 4) < self.input.len;
     }
 
@@ -97,7 +97,7 @@ const Encoder = struct {
         assert(self.remaining_batch());
 
         //NativeEndian::read_u32(self.input[n..])
-        if (builtin.endian == builtin.Endian.Little) {
+        comptime {if (builtin.endian == builtin.Endian.Little) {
             return u32(self.input[n + 0])
                 | u32(self.input[n + 1]) << 8
                 | u32(self.input[n + 2]) << 16
@@ -109,27 +109,33 @@ const Encoder = struct {
                 | u32(self.input[n + 0]) << 24;
         } else {
             @compileError("Unsupported endian\n");
-        }
+        }}
     }
 
     /// Read the batch at the cursor.
-    fn get_batch_at_cursor(self: *Self) u32 {
+    inline fn get_batch_at_cursor(self: *Self) u32 {
         return self.get_batch(self.curpos);
     }
 
     /// Get the hash of the current four bytes below the cursor.
     ///
     /// This is guaranteed to be below `DICTIONARY_SIZE`.
-    fn get_cur_hash(self: *Self) usize {
+    inline fn get_cur_hash(self: *Self) usize {
+        //  just for fun, try some fibonacci hashing
+        return (usize(self.get_batch_at_cursor()) *% 2654435769) & (DICTIONARY_SIZE - 1);
+        // >> ((@sizeOf(usize) * 8) - 12);
         // Use PCG transform to generate a relatively good hash of the four bytes batch at the
         // cursor.
-        var x: usize = self.get_batch_at_cursor() *% 0xa4d94a4f;
-        const a = x >> 16;
-        const b = @intCast(u6, (x >> 30) & 0x3f);
-        x ^= a >> b;
-        x *%= 0xa4d94a4f;
+        // var x: usize = self.get_batch_at_cursor() *% 0xa4d94a4f;
+        // const a = x >> 16;
+        // const b = @intCast(u6, (x >> 30) & 0x3f);
+        // x ^= a >> b;
+        // x *%= 0xa4d94a4f;
 
-        return x % DICTIONARY_SIZE;
+        // const hh = x % DICTIONARY_SIZE;
+        // warn("h={x04} vs hh={x04} {x}\n", h, hh, DICTIONARY_SIZE - 1);
+
+        // return hh;
     }
 
     /// Find a duplicate of the current batch.
@@ -143,7 +149,7 @@ const Encoder = struct {
 
         // Find a candidate in the dictionary by hashing the current four bytes.
         const candidate: u32 = self.dict[self.get_cur_hash()];
-        warn("candidate = {x}\n", candidate);
+        // DEBUG: warn("candidate = {x}\n", candidate);
 
         // Three requirements to the candidate exists:
         // - The candidate is not the trap value (0xFFFFFFFF), which represents an empty bucket.
@@ -155,7 +161,7 @@ const Encoder = struct {
             and (self.get_batch(candidate) == self.get_batch_at_cursor())
             and ((self.curpos - candidate) <= 0xFFFF))
         {
-            warn("candidate = {x}, curpos={x}\n", candidate, self.curpos);
+            // DEBUG: warn("candidate = {x}, curpos={x}\n", candidate, self.curpos);
             // TODO: Decipher this from rust into zig...
             // Calculate the "extension bytes", i.e. the duplicate bytes beyond the batch. These
             // are the number of prefix bytes shared between the match and needle.
@@ -178,20 +184,20 @@ const Encoder = struct {
                 }
                 ext += 1;
             }
-            warn("ext={}\n", ext);
+            // DEBUG: warn("ext={}\n", ext);
 
             return Duplicate {
                  .offset = @intCast(u16, (self.curpos - candidate) & 0xffff),
                  .extra_bytes = ext,
              };
         } else {
-            warn("null\n");
+            // DEBUG: warn("null\n");
             return null;
         }
     }
 
     /// Write an integer to the output in LSIC format.
-    fn write_integer(self: *Self, n: u32) void {
+    inline fn write_integer(self: *Self, n: u32) void {
         assert((self.outpos + n) <= self.output.len);
         var nn = n;
         // Write the 0xFF bytes as long as the integer is higher than said value.
@@ -210,7 +216,7 @@ const Encoder = struct {
         var lit: u32 = 0;
 
         while (true) {
-            warn("lit={}\n", lit);
+            // DEBG: warn("lit={}\n", lit);
             // Search for a duplicate.
             var optional_dup = self.find_duplicate();
             if (optional_dup) |dup| {
@@ -218,7 +224,7 @@ const Encoder = struct {
                 // Move forward. Note that `ext` is actually the steps minus 4, because of the
                 // minimum matchlenght, so we need to add 4.
                 _ = self.go_forward(dup.extra_bytes + 4);
-                warn("dup\n");
+                // DEBUG: warn("dup\n");
                 return Block {
                     .lit_len = lit,
                     .dup = dup,
@@ -241,19 +247,20 @@ const Encoder = struct {
         }
     }
 
-    fn push_token(self: *Self, t: u8) void {
+    inline fn push_token(self: *Self, t: u8) void {
         self.output[self.outpos] = t;
         self.outpos += 1;
     }
 
 
     fn complete(self: *Self) bool {
-        warn("input len={}, output len={}, curpos={}\n", self.input.len, self.output.len, self.curpos);
+        // DEBUG: warn("input len={}, output len={}, curpos={}\n",
+        //     self.input.len, self.output.len, self.curpos);
         // Construct one block at a time.
         while (true) {
             // The start of the literals section.
             const start = self.curpos;
-            warn("start={}\n", start);
+            // DEBUG: warn("start={}\n", start);
             assert(start <= self.input.len);
 
             // Read the next block into two sections, the literals and the duplicates.
@@ -269,7 +276,8 @@ const Encoder = struct {
                 0xF0;
             // Generate the lower half of the token, the duplicates length.
             const dup_extra_len = if (block.dup) |dup| dup.extra_bytes else 0 ;
-            warn("token={x},dup_extra_len={},block.lit_len={}\n", token, dup_extra_len, block.lit_len);
+            // DEBUG: warn("token={x},dup_extra_len={},block.lit_len={}\n",
+            //     token, dup_extra_len, block.lit_len);
             token |= if (dup_extra_len < 0xF)
             // We could fit it in.
                 @intCast(u8, dup_extra_len & 0xff)
@@ -278,7 +286,8 @@ const Encoder = struct {
             // by LSIC encoding.
                 0xF;
 
-            warn("token={x},dup_extra_len={},block.lit_len={}\n", token, dup_extra_len, block.lit_len);
+            // DEBUG: warn("token={x},dup_extra_len={},block.lit_len={}\n",
+            //     token, dup_extra_len, block.lit_len);
             // Push the token to the output stream.
             self.push_token(token);
 
@@ -290,7 +299,7 @@ const Encoder = struct {
 
             // Now, write the actual literals.
             // self.output.extend_from_slice(&self.input[start..start + block.lit_len]);
-            warn("block.lit_len={}\n", block.lit_len);
+            // DEBUG: warn("block.lit_len={}\n", block.lit_len);
             {
                 var i: usize = 0;
                 while (i < block.lit_len) : (i += 1) {
@@ -312,7 +321,7 @@ const Encoder = struct {
                     self.write_integer(dup_extra_len - 0xF);
                 }
             } else {
-                warn("done\n");
+                // DEBUG: warn("done\n");
                 break;
             }
         }
@@ -341,15 +350,15 @@ const Decoder = struct {
     token: u8,
 
     /// Check if input is empty
-    fn input_is_empty(self: *Self) bool {
+    inline fn input_is_empty(self: *Self) bool {
         return self.inpos >= self.input.len;
     }
 
     /// Internal (partial) function for `take`.
     //#[inline]
-    fn take_imp(self: *Self, n: usize) ![]const u8 {
+    inline fn take_imp(self: *Self, n: usize) ![]const u8 {
         // Check if we have enough bytes left.
-        if ((self.inpos + n) >= self.input.len) {
+        if ((self.inpos + n) > self.input.len) {
             // No extra bytes. This is clearly not expected, so we return an error.
             return error.ExpectedAnotherByte;
         } else {
@@ -374,7 +383,7 @@ const Decoder = struct {
     /// The reason this doesn't take `&mut self` is that we need partial borrowing due to the rules
     /// of the borrow checker. For this reason, we instead take some number of segregated
     /// references so we can read and write them independently.
-    fn output(self: *Self, buf: []const u8) void {
+    inline fn output(self: *Self, buf: []const u8) void {
         // We use simple memcpy to extend the vector.
         //output.extend_from_slice(&buf[..buf.len()]);
         var i: usize = 0;
@@ -390,16 +399,16 @@ const Decoder = struct {
     /// position `start` and then keep pushing the following element until we've added
     /// `match_length` elements.
     fn duplicate(self: *Self, start: usize, match_length: usize) void {
-        warn("duplicate({}, {}) {}\n", start, match_length, self.outpos);
+        //DEBUG: warn("duplicate({}, {}) {}\n", start, match_length, self.outpos);
         // We cannot simply use memcpy or `extend_from_slice`, because these do not allow
         // self-referential copies: http://ticki.github.io/img/lz4_runs_encoding_diagram.svg
         //for i in start..start + match_length {
         var i: usize = start;
-        warn("{} : {} {}\n", i, self.output.len, self.outpos);
+        //DEBUG: warn("{} : {} {}\n", i, self.output.len, self.outpos);
         while (i < (start + match_length)) : (i += 1) {
-            const b = self.output[i];
-            warn("dup=0x{x}\n", b);
-            self.output[self.outpos] = b;
+            // const b = self.output[i];
+            //DEBUG: warn("dup=0x{x}\n", b);
+            self.output[self.outpos] = self.output[i];
             self.outpos += 1;
         }
     }
@@ -419,14 +428,14 @@ const Decoder = struct {
     /// is encoded to _255 + 255 + 255 + 4 = 769_. The bytes after the first 4 is ignored, because
     /// 4 is the first non-0xFF byte.
     //#[inline]
-    fn read_integer(self: *Self) !usize {
+    inline fn read_integer(self: *Self) !usize {
         // We start at zero and count upwards.
         var n: usize = 0;
         // If this byte takes value 255 (the maximum value it can take), another byte is read
         // and added to the sum. This repeats until a byte lower than 255 is read.
         while (true) {
             // We add the next byte until we get a byte which we add to the counting variable.
-            var extra = try self.take(1);
+            const extra = try self.take(1);
             n += usize(extra[0]);
 
             // We continue if we got 255.
@@ -439,11 +448,16 @@ const Decoder = struct {
     }
 
     /// Read a little-endian 16-bit integer from the input stream.
-    // #[inline]
-    fn read_u16(self: *Self) !u16 {
+    inline fn read_u16(self: *Self) !u16 {
         // We use byteorder to read an u16 in little endian.
         const v = try self.take(2);
-        return (u16(v[1]) << 8) | v[0];
+        if (builtin.endian == builtin.Endian.Little) {
+            return (u16(v[1]) << 8) | v[0];
+        } else if (builtin.endian == builtin.Endian.Big){
+            return (u16(v[0]) << 8) | v[1];
+        } else {
+            @compileError("Unknown endianess\n");
+        }
     }
 
     /// Read the literals section of a block.
@@ -459,7 +473,7 @@ const Decoder = struct {
     fn read_literal_section(self: *Self) !void {
         // The higher token is the literals part of the token. It takes a value from 0 to 15.
         var literal = usize(self.token >> 4);
-        warn("literal=0x{x}, token=0x{x}\n", literal, self.token);
+        //DEBUG: warn("literal=0x{x}, token=0x{x}\n", literal, self.token);
         // If the initial value is 15, it is indicated that another byte will be read and added to
         // it.
         if (literal == 15) {
@@ -473,10 +487,10 @@ const Decoder = struct {
 
         // Read the literals segment and output them without processing.
         // Zigify Self::output(&mut self.output, Self::take_imp(&mut self.input, literal)?);
-        warn("input@{}=0x{x}\n", self.inpos,self.input[self.inpos]);
+        // DEBUG: warn("input@{}=0x{x}\n", self.inpos,self.input[self.inpos]);
         var i: usize = 0;
-        var taken = try self.take(literal);
-        warn("taken.len={}\n", taken.len);
+        const taken = try self.take(literal);
+        // DEBUG: warn("taken.len={}\n", taken.len);
         for (taken) |v, vi| {
             self.output[self.outpos] = v;
             self.outpos += 1;
@@ -495,7 +509,7 @@ const Decoder = struct {
     /// 2. An LSIC integer extension to the duplicate length as defined by the first part of the
     ///    token, if it takes the highest value (15).
     fn read_duplicate_section(self: *Self) !void {
-        warn("read_duplicate_section\n");
+        // DEBUG: warn("read_duplicate_section\n");
         // Now, we will obtain the offset which we will use to copy from the output. It is an
         // 16-bit integer.
         const offset = try self.read_u16();
@@ -524,8 +538,8 @@ const Decoder = struct {
         // will catch later.
         const start = self.outpos - usize(offset);
 
-        warn("offset={}, match_length={}, start={}, inpos={}\n",
-             offset, match_length, start, self.inpos);
+        // DEBUG: warn("offset={}, match_length={}, start={}, inpos={}\n",
+        //     offset, match_length, start, self.inpos);
 
         // We'll do a bound check to avoid panicking.
         if (start < self.output.len) {
@@ -567,7 +581,7 @@ const Decoder = struct {
             // higher and the lower.
             var x = try self.take(1);
             self.token = x[0];
-            warn("token=0x{x}\n", self.token);
+            //DEBUG: warn("token=0x{x}\n", self.token);
 
             // Now, we read the literals section.
             try self.read_literal_section();
@@ -618,7 +632,7 @@ pub fn compress_into(input: []const u8, output: []u8) bool {
     };
 
     var r = encoder.complete();
-    warn("curpos={}, outpos={}\n", encoder.curpos, encoder.outpos);
+    //warn("curpos={}, outpos={}\n", encoder.curpos, encoder.outpos);
     return r;
 }
 
@@ -629,16 +643,29 @@ pub fn compress(input: []const u8, output: []u8) bool {
     return compress_into(input[0..], output[0..]);
 }
 
-test "compress" {
-    var input  = "aaaaaabcbcbcbc"; // 0x11, b'a', 1, 0, 0x22, b'b', b'c', 2, 0
-    //var input = "a49"; // 0x30, b'a', b'4', b'9', = {0x30, 0x61, 0x34, 0x39, 0x0 <repeats 1020 times>}
-    //var input = "aaaaaa"; // 0x11, b'a', 1, 0, = {0x11, 0x61, 0x1, 0x0 <repeats 1021 times>}
-    //var input = "";
+pub fn main() !void {
+    var input = "abcdabcdabcdabcd";
     var compressed = []u8 {0} ** 1024;
     var uncompressed = []u8 {0} ** 1024;
     warn("## compressing ##\n");
     var comp = compress(input[0..], compressed[0..]);
-    warn("## decompressing ##\n");
-    var decomp = decompress(compressed[0..10], uncompressed[0..]);
+    warn("## decompressing ({}) ##\n", comp);
+    var decomp = try decompress(compressed[0..input.len + 2], uncompressed[0..]);
+    assert(mem.eql(u8, uncompressed[0..input.len], input[0..]));
+    warn("done\n");
+}
+
+test "compress" {
+    //var input  = "aaaaaabcbcbcbc"; // 0x11, b'a', 1, 0, 0x22, b'b', b'c', 2, 0
+    // var input = "a49"; // 0x30, b'a', b'4', b'9', = {0x30, 0x61, 0x34, 0x39, 0x0 <repeats 1020 times>}
+    // var input = "aaaaaa"; // 0x11, b'a', 1, 0, = {0x11, 0x61, 0x1, 0x0 <repeats 1021 times>}
+    var input = "The quick brown fox jumps over the lazy dog";
+    var compressed = []u8 {0} ** 1024;
+    var uncompressed = []u8 {0} ** 1024;
+    warn("## compressing ##\n");
+    var comp = compress(input[0..], compressed[0..]);
+    warn("## decompressing ({}) ##\n", comp);
+    var decomp = try decompress(compressed[0..input.len + 2], uncompressed[0..]);
+    assert(mem.eql(u8, uncompressed[0..input.len], input[0..]));
     warn("done\n");
 }
