@@ -5,6 +5,8 @@ const warn = std.debug.warn;
 const assert = std.debug.assert;
 const builtin = @import("builtin");
 
+const adler32 = @import("adler32.zig").adler32;
+
 // License MIT
 // From https://github.com/Frommi/miniz_oxide
 //! Streaming compression functionality.
@@ -189,7 +191,13 @@ const SymFreq = struct {
 };
 
 fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
+    warn("radix_sort_symbols\n");
     var hist: [2][256]u16 = undefined;
+    for (hist) |*hh| {
+        for (hh.*) |*h| {
+            h.* = 0;
+        }
+    }
 
     for (symbols0) |freq| {
         hist[0][(freq.key & 0xFF)] += 1;
@@ -217,7 +225,7 @@ fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
         }
 
         for (current_symbols) |sym| {
-            const j: usize = ((sym.key >> (pass * 8)) & 0xFF);
+            const j: usize = ((sym.key >> (pass << 3)) & 0xFF);
             new_symbols[offsets[j]] = sym;
             offsets[j] += 1;
         }
@@ -267,6 +275,11 @@ fn calculate_minimum_redundancy(symbols: []SymFreq) void {
             // for next in (0..n - 2).rev() {
             //     symbols[next].key = symbols[symbols[next].key as usize].key + 1;
             // }
+            // n=6, next=3,2,1,0
+            next = n - 1;
+            while (next > 0) : (next -= 1) {
+                symbols[next - 1].key = symbols[symbols[next - 1].key].key + 1;
+            }
 
             var avbl: usize = 1;
             var used: usize = 0;
@@ -320,7 +333,7 @@ fn enforce_max_code_size(num_codes: []u32, code_list_len: usize, max_code_size: 
     warn("x={}, total={}\n", x, total);
     while (x < total) {
         num_codes[max_code_size] -= 1;
-        i = max_code_size - 1;
+        i = max_code_size;
         // for i in (1..max_code_size).rev() {
         while (i > 0) : (i -= 1) {
             if (num_codes[i] != 0) {
@@ -456,25 +469,19 @@ fn setmem(comptime T: type, slice: []T, val: T) void {
 }
 
 fn write_u16_le(val: u16, slice: []u8, pos: usize) void {
-    assert((@sizeOf(@typeOf(val)) + pos) <= slice.len);
-    if (builtin.endian == builtin.Endian.Little) {
-        slice[pos] = @truncate(u8, val & 0xff);
-        slice[pos + 1] = @truncate(u8, val >> 8);
-    } else {
-        slice[pos] = @truncate(u8, val >> 8);
-        slice[pos + 1] = @truncate(u8, val & 0xff);
-    }
+    assert((@sizeOf(u16) + pos) <= slice.len);
+    mem.writeInt(slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
 }
 
 fn write_u16_le_uc(val: u16, slice: []u8, pos: usize) void {
     // ptr::write_unaligned(slice.as_mut_ptr().offset(pos as isize) as *mut u16, val);
     assert((@sizeOf(@typeOf(val)) + pos) <= slice.len);
-    mem.writeInt(slice[pos..], val, builtin.Endian.Little);
+    mem.writeInt(slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
 }
 
 fn read_u16_le(slice: []u8, pos: usize) u16 {
     assert(pos + 1 < slice.len);
-    assert(pos < slice.len);
+    //assert(pos < slice.len);
     return mem.readInt(slice[pos..pos+@sizeOf(u16)], u16, builtin.Endian.Little);
 }
 
@@ -494,14 +501,15 @@ pub const HuffmanEntry = struct {
 
     fn optimize_table(self: *Self, table_len: usize,
                       code_size_limit: usize, static_table: bool) void {
-        warn("table_len={}, code_size_limit={}, static_table={}\n",
-             table_len, code_size_limit, static_table);
+        //warn("table_len={}, code_size_limit={}, static_table={}\n",
+        //     table_len, code_size_limit, static_table);
         var num_codes = []u32 {0} ** (MAX_SUPPORTED_HUFF_CODESIZE + 1);
         var next_code = []u32 {0} ** (MAX_SUPPORTED_HUFF_CODESIZE + 1);
 
         if (static_table) {
-            for (self.code_sizes[0..table_len]) |code_size| {
+            for (self.code_sizes[0..table_len]) |code_size, ii| {
                 num_codes[code_size] += 1;
+                //warn("{}: {}={}\n", ii, code_size, num_codes[code_size]);
             }
         } else {
             var symbols0 = []SymFreq { SymFreq {.key = 0, .sym_index = 0} } ** MAX_HUFF_SYMBOLS;
@@ -556,21 +564,22 @@ pub const HuffmanEntry = struct {
 
         i = 0;
         while (i < table_len) : (i += 1) {
-            const code_size = self.code_sizes[i];
+            const code_size = &self.code_sizes[i];
             //DEBUG warn("i={}, code_size={}\n", i, code_size);
-            if (code_size == 0) {
+            if (code_size.* == 0) {
                 continue;
             }
-            var code = next_code[code_size];
-            next_code[code_size] += 1;
+            var code = next_code[code_size.*];
+            next_code[code_size.*] += 1;
             var rev_code: u32 = 0;
 
             j = 0;
-            while (j < code_size) : (j += 1) {
+            while (j < code_size.*) : (j += 1) {
                 rev_code = (rev_code << 1) | (code & 1);
                 code >>= 1;
             }
 
+            //warn("i={}, j={}, rev_code={}\n", i, j, rev_code);
             self.codes[i] = @truncate(u16, rev_code & @maxValue(u16));
         }
     }
@@ -586,19 +595,62 @@ const HUFF_CODES_TABLE = 2;
 
 pub const Huffman = struct {
     const Self = this;
-    tables: [MAX_HUFF_TABLES]HuffmanEntry,
+    //tables: [MAX_HUFF_TABLES]HuffmanEntry,
+    litlen: HuffmanEntry,
+    dist: HuffmanEntry,
+    huffcodes: HuffmanEntry, 
+
+    fn dump(self: *Self) void {
+        warn("Huffman\n");
+    }
+
+    fn init () Self {
+        var huff = Self {
+            .litlen = HuffmanEntry {
+                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
+            },
+            .dist = HuffmanEntry {
+                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
+            },
+            .huffcodes = HuffmanEntry {
+                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
+                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
+            },
+        };
+    
+        return huff;
+    }
+
+    fn compress_block(self: *Self, output: *OutputBuffer, lz: *LZ, static_block: bool) !bool {
+        //warn("compress_block {}\n", static_block);
+        //lz.dump();
+        if (static_block) {
+            self.start_static_block(output);
+        } else {
+            //try self.start_dynamic_block(output);
+            self.start_static_block(output);
+        }
+
+        //lz.dump();
+        return compress_lz_codes(self, output, lz.codes[0..lz.code_position]);
+    }
 
     fn start_static_block(self: *Self, output: *OutputBuffer) void {
         warn("start_static_block\n");
-        setmem(u6, self.tables[LITLEN_TABLE].code_sizes[0..144], 8);
-        setmem(u6, self.tables[LITLEN_TABLE].code_sizes[144..256], 9);
-        setmem(u6, self.tables[LITLEN_TABLE].code_sizes[256..280], 7);
-        setmem(u6, self.tables[LITLEN_TABLE].code_sizes[280..288], 8);
+        setmem(u6, self.litlen.code_sizes[0..144], 8);
+        setmem(u6, self.litlen.code_sizes[144..256], 9);
+        setmem(u6, self.litlen.code_sizes[256..280], 7);
+        setmem(u6, self.litlen.code_sizes[280..288], 8);
 
-        setmem(u6, self.tables[DIST_TABLE].code_sizes[0..32], 5);
+        setmem(u6, self.dist.code_sizes[0..32], 5);
 
-        self.tables[LITLEN_TABLE].optimize_table(288, 15, true);
-        self.tables[DIST_TABLE].optimize_table(32, 15, true);
+        self.litlen.optimize_table(288, 15, true);
+        self.dist.optimize_table(32, 15, true);
 
         output.put_bits(0b01, 2);
     }
@@ -606,10 +658,10 @@ pub const Huffman = struct {
     fn start_dynamic_block(self: *Self, output: *OutputBuffer) !void {
         warn("start_dynamic_block\n");
         // There will always be one, and only one end of block code.
-        self.tables[0].count[256] = 1;
+        self.litlen.count[256] = 1;
 
-        self.tables[0].optimize_table(MAX_HUFF_SYMBOLS_0, 15, false);
-        self.tables[1].optimize_table(MAX_HUFF_SYMBOLS_1, 15, false);
+        self.litlen.optimize_table(MAX_HUFF_SYMBOLS_0, 15, false);
+        self.dist.optimize_table(MAX_HUFF_SYMBOLS_1, 15, false);
 
         const num_lit_codes = 286; // -
         //     &self.code_sizes[0][257..286]
@@ -636,12 +688,12 @@ pub const Huffman = struct {
         //     .copy_from_slice(&self.code_sizes[1][..num_dist_codes]);
 
         var rle = RLE {
-             .z_count = 0,
-             .repeat_count = 0,
-             .p_code_size = 0xFF,
+            .z_count = 0,
+            .repeat_count = 0,
+            .p_code_size = 0xFF,
         };
 
-        setmem(u16, self.tables[HUFF_CODES_TABLE].count[0..MAX_HUFF_SYMBOLS_2], 0);
+        setmem(u16, self.huffcodes.count[0..MAX_HUFF_SYMBOLS_2], 0);
 
         var packed_code_sizes_cursor = Cursor([]u8){.pos= 0, .inner = packed_code_sizes[0..]};
         // for &code_size in &code_sizes_to_pack[..total_code_sizes_to_pack] {
@@ -674,7 +726,7 @@ pub const Huffman = struct {
             try rle.zero_code_size(&packed_code_sizes_cursor, self);
         }
 
-        self.tables[2].optimize_table(MAX_HUFF_SYMBOLS_2, 7, false);
+        self.huffcodes.optimize_table(MAX_HUFF_SYMBOLS_2, 7, false);
 
         output.put_bits(2, 2);
 
@@ -723,29 +775,6 @@ pub const Huffman = struct {
 
 };
 
-fn DefaultHuffman () Huffman {
-    var huff = Huffman {
-        .tables = []HuffmanEntry {
-            HuffmanEntry {
-                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
-            },
-            HuffmanEntry {
-                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
-            },
-            HuffmanEntry {
-                .count = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .codes = []u16 {0} ** MAX_HUFF_SYMBOLS,
-                .code_sizes = []u6 {0} ** MAX_HUFF_SYMBOLS,
-            },
-        },
-    };
-
-    return huff;
-}
 
 /// Size of the buffer of LZ77 encoded data.
 pub const LZ_CODE_BUF_SIZE = 64 * 1024;
@@ -756,27 +785,28 @@ pub const HashBuffers = struct {
     pub dict: [LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + 1]u8,
     pub next: [LZ_DICT_SIZE]u16,
     pub hash: [LZ_DICT_SIZE]u16,
+
+    fn init() HashBuffers {
+        return HashBuffers {
+            .dict = []u8 {0} ** (LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + 1),
+            .next = []u16 {0} ** LZ_DICT_SIZE,
+            .hash = []u16 {0} ** LZ_DICT_SIZE,
+        };
+    }
 };
 
-fn DefaultHashBuffers() HashBuffers {
-    return HashBuffers {
-        .dict = []u8 {0} ** (LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + 1),
-        .next = []u16 {0} ** LZ_DICT_SIZE,
-        .hash = []u16 {0} ** LZ_DICT_SIZE,
-    };
-}
 
 pub const LocalBuf = struct {
     const Self = this;
     pub b: [OUT_BUF_SIZE]u8,
-
+    
     fn default() Self {
         return LocalBuf {
             .b = []u8 {0} ** OUT_BUF_SIZE,
         };
     }
 };
-
+    
 const MatchResult = struct {
     const Self = this;
     distance: u32,
@@ -802,11 +832,11 @@ const Dictionary = struct {
     pub lookahead_size: u32,
     pub lookahead_pos: u32,
     pub size: u32,
-
-    fn new(flags: u32) Self {
+    
+    fn init(flags: u32) Self {
         return Dictionary {
             .max_probes = []u32 {1 + ((flags & 0xFFF) + 2) / 3, 1 + (((flags & 0xFFF) >> 2) + 2) / 3},
-            .b = DefaultHashBuffers(),
+            .b = HashBuffers.init(),
             .code_buf_dict_pos = 0,
             .lookahead_size = 0,
             .lookahead_pos = 0,
@@ -814,76 +844,76 @@ const Dictionary = struct {
         };
     }
 
-    /// Do an unaligned read of the data at `pos` in the dictionary and treat it as if it was of
-    /// type T.
-    ///
-    /// Unsafe due to reading without bounds checking and type casting.
-    fn read_unaligned(self: *Self, comptime T: type, pos: usize) T {
-        //ptr::read_unaligned((&self.b.dict as *const [u8] as *const u8).offset(pos) as
-        //                    *const T)
-        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.Endian.Big);
-    }
-
-    /// Try to find a match for the data at lookahead_pos in the dictionary that is
-    /// longer than `match_len`.
-    /// Returns a tuple containing (match_distance, match_length). Will be equal to the input
-    /// values if no better matches were found.
-    fn find_match(self: *Self, lookahead_pos: u32, max_dist: u32, amax_match_len: u32,
-                  amatch_dist: u32,
-                  amatch_len: u32,
-    ) MatchResult {
-        // Clamp the match len and max_match_len to be valid. (It should be when this is called, but
-        // do it for now just in case for safety reasons.)
-        // This should normally end up as at worst conditional moves,
-        // so it shouldn't slow us down much.
-        // TODO: Statically verify these so we don't need to do this.
-        var max_match_len = MIN(u32, MAX_MATCH_LEN, amax_match_len);
-        var match_len = MAX(u32, amatch_len, 1);
-        var match_dist = amatch_dist;
-        var i: usize = 0;
-
-        const pos = (lookahead_pos & LZ_DICT_SIZE_MASK);
-        var probe_pos = pos;
-        // Number of probes into the hash chains.
-        var num_probes_left = self.max_probes[@boolToInt(match_len >= 32)];
-
-        // If we already have a match of the full length don't bother searching for another one.
-        if (max_match_len <= match_len) {
-            return MatchResult{.distance = match_dist, .length = match_len, .loc = 0};
+        /// Do an unaligned read of the data at `pos` in the dictionary and treat it as if it was of
+        /// type T.
+        ///
+        /// Unsafe due to reading without bounds checking and type casting.
+        fn read_unaligned(self: *Self, comptime T: type, pos: usize) T {
+            //ptr::read_unaligned((&self.b.dict as *const [u8] as *const u8).offset(pos) as
+            //                    *const T)
+            return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.Endian.Big);
         }
 
-        // Read the last byte of the current match, and the next one, used to compare matches.
-        // # Unsafe
-        // `pos` is masked by `LZ_DICT_SIZE_MASK`
-        // `match_len` is clamped be at least 1.
-        // If it is larger or equal to the maximum length, this statement won't be reached.
-        // As the size of self.dict is LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + DICT_PADDING,
-        // this will not go out of bounds.
-        var c01: u16 = self.read_unaligned(u16, (pos + match_len - 1));
-        // Read the two bytes at the end position of the current match.
-        // # Unsafe
-        // See previous.
-        var s01: u16 = self.read_unaligned(u16, pos);
+        /// Try to find a match for the data at lookahead_pos in the dictionary that is
+        /// longer than `match_len`.
+        /// Returns a tuple containing (match_distance, match_length). Will be equal to the input
+        /// values if no better matches were found.
+        fn find_match(self: *Self, lookahead_pos: u32, max_dist: u32, amax_match_len: u32,
+                      amatch_dist: u32,
+                      amatch_len: u32,
+        ) MatchResult {
+            // Clamp the match len and max_match_len to be valid. (It should be when this is called, but
+            // do it for now just in case for safety reasons.)
+            // This should normally end up as at worst conditional moves,
+            // so it shouldn't slow us down much.
+            // TODO: Statically verify these so we don't need to do this.
+            var max_match_len = MIN(u32, MAX_MATCH_LEN, amax_match_len);
+            var match_len = MAX(u32, amatch_len, 1);
+            var match_dist = amatch_dist;
+            var i: usize = 0;
 
-        outer: while (true) {
-            var dist: u32 = 0;
-            found: while (true) {
-                warn("num_probes_left={}\n", num_probes_left);
-                num_probes_left -= 1;
-                if (num_probes_left == 0) {
-                    // We have done as many probes in the hash chain as the current compression
-                    // settings allow, so return the best match we found, if any.
-                    return MatchResult{.distance = match_dist, .length = match_len, .loc = 1};
-                }
+            const pos = (lookahead_pos & LZ_DICT_SIZE_MASK);
+            var probe_pos = pos;
+            // Number of probes into the hash chains.
+            var num_probes_left = self.max_probes[@boolToInt(match_len >= 32)];
 
-                // for _ in 0..3 {
-                i = 0;
-                while (i < 3) : (i += 1) {
-                    const next_probe_pos: u32 = self.b.next[probe_pos];
+            // If we already have a match of the full length don't bother searching for another one.
+            if (max_match_len <= match_len) {
+                return MatchResult{.distance = match_dist, .length = match_len, .loc = 0};
+            }
 
-                    dist = ((lookahead_pos - next_probe_pos) & 0xFFFF);
-                    if ((next_probe_pos == 0) or (dist > max_dist)) {
-                        // We reached the end of the hash chain, or the next value is further away
+            // Read the last byte of the current match, and the next one, used to compare matches.
+            // # Unsafe
+            // `pos` is masked by `LZ_DICT_SIZE_MASK`
+            // `match_len` is clamped be at least 1.
+            // If it is larger or equal to the maximum length, this statement won't be reached.
+            // As the size of self.dict is LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + DICT_PADDING,
+            // this will not go out of bounds.
+            var c01: u16 = self.read_unaligned(u16, (pos + match_len - 1));
+            // Read the two bytes at the end position of the current match.
+            // # Unsafe
+            // See previous.
+            var s01: u16 = self.read_unaligned(u16, pos);
+
+            outer: while (true) {
+                var dist: u32 = 0;
+                found: while (true) {
+                    //warn("num_probes_left={}\n", num_probes_left);
+                    num_probes_left -= 1;
+                    if (num_probes_left == 0) {
+                        // We have done as many probes in the hash chain as the current compression
+                        // settings allow, so return the best match we found, if any.
+                        return MatchResult{.distance = match_dist, .length = match_len, .loc = 1};
+                    }
+
+                    // for _ in 0..3 {
+                    i = 0;
+                    while (i < 3) : (i += 1) {
+                        const next_probe_pos: u32 = self.b.next[probe_pos];
+
+                        dist = ((lookahead_pos - next_probe_pos) & 0xFFFF);
+                        if ((next_probe_pos == 0) or (dist > max_dist)) {
+                            // We reached the end of the hash chain, or the next value is further away
                         // than the maximum allowed distance, so return the best match we found, if
                         // any.
                         return MatchResult {.distance = match_dist, .length = match_len, .loc = 2};
@@ -899,7 +929,7 @@ const Dictionary = struct {
                     // The first two bytes, last byte and the next byte matched, so
                     // check the match further.
                     if (self.read_unaligned(u16, (probe_pos + match_len - 1)) == c01) {
-                        warn("break 0x{x04} found\n", c01);
+                        //warn("break 0x{x04} found\n", c01);
                         break :found;
                     }
                     //     }
@@ -962,6 +992,7 @@ const Dictionary = struct {
 
 };
 
+
 const SeekFrom = union(enum) {
     Start: isize,
     End: isize,
@@ -992,13 +1023,13 @@ fn Cursor(comptime T: type) type {
         fn seek(self: *Self, style: SeekFrom) !void {
             switch (style) {
                 SeekFrom.Start => |dist| {
-                    warn("Seeking from start {}\n", dist);
+                    //warn("Seeking from start {}\n", dist);
                 },
                 SeekFrom.End => |dist| {
-                    warn("Seeking from end {}\n", dist);
+                    //warn("Seeking from end {}\n", dist);
                 },
                 SeekFrom.Current => |dist| {
-                    warn("Seeking from current {}\n", dist);
+                    //warn("Seeking from current {}\n", dist);
                     var d = dist;
                     if (d > 0) {
                         while (d > 0) : (d -= 1) {
@@ -1018,7 +1049,7 @@ fn Cursor(comptime T: type) type {
             if ((self.inner.len - self.pos) <= @sizeOf(u64)) {
                 return error.NoSpaceLeft;
             }
-            mem.writeInt(self.inner[self.pos..], value, endian);
+            mem.writeInt(self.inner[self.pos..self.pos+@sizeOf(u64)], value, endian);
         }
 
         fn write_all(self: *Self, buf: []u8) !void {
@@ -1031,7 +1062,7 @@ fn Cursor(comptime T: type) type {
             }
         }
     };
-}
+    }
 
 const OutputBuffer = struct {
     const Self = this;
@@ -1045,11 +1076,13 @@ const OutputBuffer = struct {
     }
 
     fn write_u64_le(self: *Self, value: u64) !void {
+        //warn("Writing u64={x}\n", value);
         try self.inner.writeInt(value, builtin.Endian.Little);
     }
 
     fn put_bits(self: *Self, bits: u32, length: u32) void {
         // assert!(bits <= ((1u32 << len) - 1u32));
+        //warn("put_bits({x08},{})\n", bits, length);
         self.bit_buffer |= bits << self.bits_in;
         self.bits_in += truncmask(u5, length);
         while (self.bits_in >= 8) {
@@ -1063,12 +1096,14 @@ const OutputBuffer = struct {
     }
 
     fn save(self: *Self) SavedOutputBuffer {
-        return SavedOutputBuffer {
+        var sb = SavedOutputBuffer {
             .pos = self.inner.position(),
             .bit_buffer = self.bit_buffer,
             .bits_in = self.bits_in,
             .local = self.local,
         };
+
+        return sb;
     }
 
     fn load(self: *Self, saved: SavedOutputBuffer) void {
@@ -1081,6 +1116,7 @@ const OutputBuffer = struct {
     fn pad_to_bytes(self: *Self) void {
         if (self.bits_in != 0) {
             const length = 8 - self.bits_in;
+            warn("pad_to_bytes bits_in={}, length={}\n", self.bits_in, length);
             self.put_bits(0, length);
         }
     }
@@ -1100,10 +1136,10 @@ test "outputbuffer and bitbuffer" {
 
     var bb = BitBuffer {.bit_buffer = 0, .bits_in = 0};
     bb.put_fast(123456, 63);
-    bb.warn();
+    bb.dump();
 
     var r = bb.flush(&ob);
-    bb.warn();
+    bb.dump();
     warn("ob.len={}, ob.pos={}\n", ob.len(), ob.inner.position());
 }
 
@@ -1122,32 +1158,42 @@ const SavedOutputBuffer = struct {
 
 const BitBuffer = struct {
     const Self = this;
+    // space for up to 8 bytes
     pub bit_buffer: u64,
     pub bits_in: u6,
 
-    fn warn(self: *Self) void {
+    fn dump(self: *Self) void {
         warn("bit_buffer={x016}, bits_in={}\n", self.bit_buffer, self.bits_in);
     }
 
     fn put_fast(self: *Self, bits: u64, len: u6) void {
         // what if we want to write a complete u64?
-        self.bit_buffer |= bits << self.bits_in;
+        //self.dump();
+        //warn("BitBuffer put_fast({x016}, {})\n", bits, len);
+        self.bit_buffer |= (bits << self.bits_in);
         self.bits_in += len;
+        //self.dump();
     }
 
     fn flush(self: *Self, output: *OutputBuffer) !void {
-        var pos = output.inner.position();
-        warn("BitBuffer flush pos={}\n", pos);
+        const pos = output.inner.position();
+        //warn("-> BitBuffer flush pos={} {x016} bits_in={}\n", pos, self.bit_buffer, self.bits_in);
         //var inner = &mut ((*output.inner.get_mut())[pos]) as *mut u8 as *mut u64;
         // # Unsafe
         // TODO: check unsafety
         //unsafe {
         //    ptr::write_unaligned(inner, self.bit_buffer.to_le());
         //}
+        // Write the complete u64
         try output.write_u64_le(self.bit_buffer);
+        // Move forward the number of bytes actually valid 
         try output.inner.seek(SeekFrom {.Current = self.bits_in >> 3 });
+        //warn("Bits out {}\n", self.bits_in & ~@typeOf(self.bits_in)(7));
+        // Update the bit buffer
         self.bit_buffer >>= self.bits_in & ~@typeOf(self.bits_in)(7);
+        // Update the number of bits
         self.bits_in &= 7;
+        //warn("<- BitBuffer flush pos={} {x016} bits_in={}\n", pos, self.bit_buffer, self.bits_in);
     }
 };
 
@@ -1160,7 +1206,7 @@ pub const RLE = struct {
     pub p_code_size: u8,
 
     fn prev_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman ) !void {
-        var counts = &h.tables[HUFF_CODES_TABLE].count;
+        var counts = &h.huffcodes.count;
         if (self.repeat_count != 0) {
             if (self.repeat_count < 3) {
                 counts[self.p_code_size] = counts[self.p_code_size]
@@ -1172,7 +1218,8 @@ pub const RLE = struct {
                 //                         usize],
                 // )?;
                 var ary = []u8 {code, code, code};
-                try packed_code_sizes.write_all(ary[0..self.repeat_count]);
+                warn("repeat_count={}\n", self.repeat_count);
+                try packed_code_sizes.write_all(ary[0..self.repeat_count - 1]);
             } else {
                 counts[16] = counts[16] +% 1;
                 var ary = []u8 {16, @truncate(u8, (self.repeat_count - 3) & 0xff)};
@@ -1183,28 +1230,28 @@ pub const RLE = struct {
     }
 
     fn zero_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman) !void {
-        var counts = &h.tables[HUFF_CODES_TABLE].count;
+        var counts = &h.huffcodes.count;
         if (self.z_count != 0) {
             if (self.z_count < 3) {
                 counts[0] +%= self.z_count;
                 // packed_code_sizes.write_all(
                 //     &[0, 0, 0][..self.z_count as usize],
                 // )?;
-                var ary = []u8 {0,0,0};
+                const ary = []u8 {0,0,0};
                 try packed_code_sizes.write_all(ary[0..self.z_count]);
             } else if (self.z_count <= 10) {
                 counts[17] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[17, (self.z_count - 3) as u8][..],
                 // )?;
-                var ary = []u8 {17, truncmask(u8, self.z_count - 3)};
+                const ary = []u8 {17, truncmask(u8, self.z_count - 3)};
                 try packed_code_sizes.write_all(ary[0..]);
             } else {
                 counts[18] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[18, (self.z_count - 11) as u8][..],
                 // )?;
-                var ary = []u8 {18, truncmask(u8, self.z_count - 11)};
+                const ary = []u8 {18, truncmask(u8, self.z_count - 11)};
                 try packed_code_sizes.write_all(ary[0..]);
             }
             self.z_count = 0;
@@ -1239,7 +1286,12 @@ const Params = struct {
 
     pub local_buf: LocalBuf,
 
-    fn new(flags: u32) Self {
+    fn dump(self: *Self) void {
+        warn("Params: flags={}, greedy_parsing={}\n",
+        self.flags, self.greedy_parsing);
+    }
+
+    fn init(flags: u32) Self {
         return Params {
             .flags = flags,
             .greedy_parsing = (flags & TDEFL_GREEDY_PARSING_FLAG) != 0,
@@ -1262,37 +1314,50 @@ const Params = struct {
     }
 };
 
+test "Params" {
+    var p = Params.init(0);
+    p.dump();
+}
+
 const LZ = struct {
     const Self = this;
-    pub codes: [LZ_CODE_BUF_SIZE]u8,
     pub code_position: usize,
     pub flag_position: usize,
-
     pub total_bytes: u32,
     pub num_flags_left: u32,
+    pub codes: [LZ_CODE_BUF_SIZE]u8,
+    
+    fn dump(self: *Self) void {
+        warn("LZ code_position={}, flag_postion={}, total_bytes={}, num_flags_left={}, flag={x02}\n",
+             self.code_position, self.flag_position, self.total_bytes, self.num_flags_left, (self.get_flag()).*);
+    }
 
-    fn new() Self {
-        return LZ {
+    fn init() Self {
+        var lz = Self {
             .codes = []u8 {0} ** LZ_CODE_BUF_SIZE,
             .code_position = 1,
             .flag_position = 0,
             .total_bytes = 0,
             .num_flags_left = 8,
         };
+        //lz.dump();
+        return lz;
     }
 
     fn write_code(self: *Self, val: u8) void {
         self.codes[self.code_position] = val;
         self.code_position += 1;
     }
-
+    
     fn init_flag(self: *Self) void {
+        //warn("init_flags: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
         if (self.num_flags_left == 8) {
             (self.get_flag()).* = 0;
             self.code_position -= 1;
         } else {
-            (self.get_flag()).* >>= @truncate(u3, self.num_flags_left);
+            (self.get_flag()).* >>= truncmask(u3, self.num_flags_left);
         }
+        //warn("init_flags: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
     }
 
     fn get_flag(self: *Self) *u8 {
@@ -1300,18 +1365,27 @@ const LZ = struct {
     }
 
     fn plant_flag(self: *Self) void {
+        //warn("plant_flag: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
         self.flag_position = self.code_position;
         self.code_position += 1;
+        //warn("plant_flag: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
     }
 
     fn consume_flag(self: *Self) void {
+        //warn("consume_flag: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
         self.num_flags_left -= 1;
         if (self.num_flags_left == 0) {
             self.num_flags_left = 8;
             self.plant_flag();
         }
+        //warn("consume_flag: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
     }
 };
+
+
+test "LZ" {
+    const lz = LZ.init();
+}
 
 /// Main compression struct.
 pub const Compressor = struct {
@@ -1321,16 +1395,26 @@ pub const Compressor = struct {
     huff: Huffman,
     dict: Dictionary,
 
-    fn new(flags: u32) Self {
-        return Compressor {
-            .lz = LZ.new(),
-            .params = Params.new(flags),
-            // LATER
-            /// Put HuffmanOxide on the heap with default trick to avoid
-            /// excessive stack copies.
-            .huff = DefaultHuffman(),
-            .dict = Dictionary.new(flags),
-        };
+    fn init(flags: u32) Self {
+        warn("new Compressor\n");
+        var comp: Self = Compressor {.lz = undefined, .params = undefined, .huff = Huffman.init(), .dict = undefined};
+        // return Compressor {
+        //     .lz = undefined, //LZ.init(),
+        //     .params = undefined, //Params.init(flags),
+        //     // LATER
+        //     /// Put HuffmanOxide on the heap with default trick to avoid
+        //     /// excessive stack copies.
+        //     .huff = Huffman.init(),
+        //     .dict = undefined,//Dictionary.init(flags),
+        // };
+        return comp;
+    }
+
+    fn initialize(self: *Self, flags: u32) void {
+        self.lz = LZ.init();
+        self.params = Params.init(flags);
+        self.huff = Huffman.init();
+        self.dict = Dictionary.init(flags);
     }
 };
 
@@ -1340,12 +1424,16 @@ const ReturnTuple = struct {
     status: TDEFLStatus,
     inpos: usize,
     outpos: usize,
-
+    
+    fn dump(self: *Self) void {
+        warn("inpos={}, outpos={}\n", self.inpos, self.outpos);
+    }
+    
     fn new(status: TDEFLStatus, inpos: usize, outpos: usize) Self {
         return ReturnTuple {.status = status, .inpos= inpos, .outpos = outpos};
     }
 };
-
+    
 const Callback = struct {
     const Self = this;
     in_buf: []u8,
@@ -1367,182 +1455,181 @@ const Callback = struct {
         };
     }
 
-    fn new_output_buffer(self: *Self, local_buf: []u8, out_buf_ofs: usize) OutputBuffer {
-        var is_local = false;
-        var buf_len: usize = OUT_BUF_SIZE - 16;
-        // let chosen_buffer = match *self {
-        //     CallbackOut::Buf(ref mut cb)
-        //         if cb.out_buf.len() - out_buf_ofs >= OUT_BUF_SIZE => {
-        //         is_local = false;
-        //         &mut cb.out_buf[out_buf_ofs..out_buf_ofs + buf_len]
-        //     }
-        //     _ => {
-        is_local = true;
-        var chosen_buffer = local_buf[0..buf_len];
-        //     }
-        // };
+        fn new_output_buffer(self: *Self, local_buf: []u8, out_buf_ofs: usize) OutputBuffer {
+            var is_local = false;
+            var buf_len: usize = OUT_BUF_SIZE - 16;
+            // let chosen_buffer = match *self {
+            //     CallbackOut::Buf(ref mut cb)
+            //         if cb.out_buf.len() - out_buf_ofs >= OUT_BUF_SIZE => {
+            //         is_local = false;
+            //         &mut cb.out_buf[out_buf_ofs..out_buf_ofs + buf_len]
+            //     }
+            //     _ => {
+            is_local = true;
+            var chosen_buffer = local_buf[0..buf_len];
+            //     }
+            // };
 
-        // let cursor = Cursor::new(chosen_buffer);
-        return OutputBuffer {
-            .inner = Cursor([]u8) {.pos = 0, .inner = chosen_buffer},
-            .local = is_local,
-            .bit_buffer = 0,
-            .bits_in = 0,
-        };
-    }
-
-    fn update_size(self: *Self, in_size: ?usize, out_size: ?usize) void {
-        if (in_size) |isz| {
-            self.in_buf_size = isz;
+            // let cursor = Cursor::new(chosen_buffer);
+            return OutputBuffer {
+                .inner = Cursor([]u8) {.pos = 0, .inner = chosen_buffer},
+                .local = is_local,
+                .bit_buffer = 0,
+                .bits_in = 0,
+            };
         }
-        if (out_size) |osz| {
-            self.out_buf_size = osz;
-        }
-    }
 
-    fn flush_output(self: *Self, saved_output: SavedOutputBuffer, params: *Params) !u32 {
-        warn("flush_output()\n");
-        saved_output.dump();
-        if (saved_output.pos == 0) {
+        fn update_size(self: *Self, in_size: ?usize, out_size: ?usize) void {
+            if (in_size) |isz| {
+                self.in_buf_size = isz;
+            }
+            if (out_size) |osz| {
+                self.out_buf_size = osz;
+            }
+        }
+
+        fn flush_output(self: *Self, saved_output: SavedOutputBuffer, params: *Params) !u32 {
+            //warn("flush_output()\n");
+            //saved_output.dump();
+            if (saved_output.pos == 0) {
+                return params.flush_remaining;
+            }
+
+            self.update_size(params.src_pos, null);
+            // match self.out {
+            //     CallbackOut::Func(ref mut cf) => cf.flush_output(saved_output, params),
+            //     CallbackOut::Buf(ref mut cb) => cb.flush_output(saved_output, params),
+            // }
+            if (saved_output.local) {
+                // let n = cmp::min(
+                //     saved_output.pos as usize,
+                //     self.out_buf.len() - params.out_buf_ofs,
+                // );
+                const n = MIN(usize, saved_output.pos, self.out.len - params.out_buf_ofs);
+                //warn("local n={}\n", n);
+                // (&mut self.out_buf[params.out_buf_ofs..params.out_buf_ofs + n])
+                //     .copy_from_slice(&params.local_buf.b[..n]);
+                var i: usize = 0;
+                while (i < n) : (i += 1) {
+                    self.out[params.out_buf_ofs + i] = params.local_buf.b[i];
+                }
+
+                params.out_buf_ofs += n;
+                if (saved_output.pos != n) {
+                    params.flush_ofs = truncmask(u32, n);
+                    params.flush_remaining = truncmask(u32, saved_output.pos - n);
+                }
+            } else {
+                //warn("not local\n");
+                params.out_buf_ofs += saved_output.pos;
+            }
+
+            // FAKE
+            if (saved_output.pos == 0) { return error.Fake; }
             return params.flush_remaining;
         }
-
-        self.update_size(params.src_pos, null);
-        // match self.out {
-        //     CallbackOut::Func(ref mut cf) => cf.flush_output(saved_output, params),
-        //     CallbackOut::Buf(ref mut cb) => cb.flush_output(saved_output, params),
-        // }
-        if (saved_output.local) {
-            warn("local\n");
-            // let n = cmp::min(
-            //     saved_output.pos as usize,
-            //     self.out_buf.len() - params.out_buf_ofs,
-            // );
-            // (&mut self.out_buf[params.out_buf_ofs..params.out_buf_ofs + n])
-            //     .copy_from_slice(&params.local_buf.b[..n]);
-
-            // params.out_buf_ofs += n;
-            // if saved_output.pos != n as u64 {
-            //     params.flush_ofs = n as u32;
-            //     params.flush_remaining = (saved_output.pos - n as u64) as u32;
-            // }
-        } else {
-            warn("not local\n");
-            params.out_buf_ofs += saved_output.pos;
-        }
-
-        // FAKE
-        if (saved_output.pos == 0) { return error.Fake; }
-        return params.flush_remaining;
-    }
-};
-
-fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !bool {
-    var flags: u32 = 1;
-    var bb = BitBuffer {
-        .bit_buffer = output.bit_buffer,
-        .bits_in = output.bits_in,
     };
 
-    var i: usize = 0;
-    while (i < lz_code_buf.len) {
-        if (flags == 1) {
-            flags = u32(lz_code_buf[i]) | 0x100;
-            i += 1;
-        }
+    fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !bool {
+        //warn("compress_lz_codes\n");
+        var flags: u32 = 1;
+        var bb = BitBuffer {
+            .bit_buffer = u64(output.bit_buffer),
+            .bits_in = output.bits_in,
+        };
 
-        // The lz code was a length code
-        if ((flags & 1) == 1) {
-            flags >>= 1;
+        //bb.dump();
 
-            var sym: usize = 0;
-            var num_extra_bits: u6 = 0;
-
-            var match_len: usize = lz_code_buf[i];
-
-            var match_dist = usize(read_u16_le(lz_code_buf, i + 1));
-
-            i += 3;
-
-            assert(huff.tables[0].code_sizes[LEN_SYM[match_len]] != 0);
-            bb.put_fast(
-                huff.tables[0].codes[LEN_SYM[match_len]],
-                huff.tables[0].code_sizes[LEN_SYM[match_len]],
-            );
-            bb.put_fast(
-                u64(match_len) & BITMASKS[LEN_EXTRA[match_len]],
-                LEN_EXTRA[match_len],
-            );
-
-            if (match_dist < 512) {
-                sym = SMALL_DIST_SYM[match_dist];
-                num_extra_bits = SMALL_DIST_EXTRA[match_dist];
-            } else {
-                sym = LARGE_DIST_SYM[(match_dist >> 8)];
-                num_extra_bits = LARGE_DIST_EXTRA[(match_dist >> 8)];
+        var i: usize = 0;
+        while (i < lz_code_buf.len) {
+            if (flags == 1) {
+                flags = u32(lz_code_buf[i]) | 0x100;
+                i += 1;
             }
 
-            assert(huff.tables[1].code_sizes[sym] != 0);
-            bb.put_fast(huff.tables[1].codes[sym], huff.tables[1].code_sizes[sym]);
-            bb.put_fast(
-                u64(match_dist) & BITMASKS[num_extra_bits],
-                num_extra_bits,
-            );
-        } else {
-            // The lz code was a literal
-            //for _ in 0..3 {
-            var iter: usize = 0;
-            while (iter < 4) : (iter += 1) {
+            // The lz code was a length code
+            if ((flags & 1) == 1) {
                 flags >>= 1;
-                const lit = lz_code_buf[i];
-                i += 1;
 
-                assert(huff.tables[0].code_sizes[lit] != 0);
+                var sym: usize = 0;
+                var num_extra_bits: u16 = 0;
+                const match_len: u16 = lz_code_buf[i];
+                const match_dist = read_u16_le(lz_code_buf, i + 1);
+                //const match_dist = 
+                //warn("match_len={}, match_dist={}\n", match_len, match_dist);
+
+                i += 3;
+
+                assert(huff.litlen.code_sizes[LEN_SYM[match_len]] != 0);
+                //warn("LEN[{}]={},{}, {}\n", match_len,LEN_SYM[match_len],  huff.litlen.codes[LEN_SYM[match_len]],  huff.litlen.code_sizes[LEN_SYM[match_len]]);
+                const lensym = LEN_SYM[match_len];
+                const lenextra = LEN_EXTRA[match_len];
+                bb.put_fast(u64(huff.litlen.codes[lensym]), huff.litlen.code_sizes[lensym]);
+                bb.put_fast(u64(match_len) & u64(BITMASKS[lenextra]), lenextra);
+                //bb.dump();
+
+                if (match_dist < 512) {
+                    sym = SMALL_DIST_SYM[match_dist];
+                    num_extra_bits = SMALL_DIST_EXTRA[match_dist];
+                } else {
+                    sym = LARGE_DIST_SYM[(match_dist >> 8)];
+                    num_extra_bits = LARGE_DIST_EXTRA[(match_dist >> 8)];
+                }
+                
+                //warn("sym={}, num_extra_bits={}, match_len={}, match_dist={}\n",
+                //     sym, num_extra_bits, match_len, match_dist);
+                assert(huff.dist.code_sizes[sym] != 0);
+                bb.put_fast(u64(huff.dist.codes[sym]), huff.dist.code_sizes[sym]);
                 bb.put_fast(
-                    huff.tables[0].codes[lit],
-                    huff.tables[0].code_sizes[lit],
-                );
+                    u64(match_dist) & u64(BITMASKS[num_extra_bits]),
+                    truncmask(u6, num_extra_bits));
+            } else {
+                // The lz code was a literal
+                //warn("literal\n");
+                //for _ in 0..3 {
+                var ii: usize = 0;
+                while (ii < 3) : (ii += 1) {
+                    flags >>= 1;
+                    const lit = lz_code_buf[i];
+                    i += 1;
 
-                if (((flags & 1) == 1) or (i >= lz_code_buf.len)) {
-                    break;
+                    assert(huff.litlen.code_sizes[lit] != 0);
+                    //warn("lit={c}, huff.litlen.codes[lit]={}, huff.litlen.code_sizes[lit]={}\n",
+                    //     lit, huff.litlen.codes[lit], huff.litlen.code_sizes[lit]);
+                    bb.put_fast(huff.litlen.codes[lit], huff.litlen.code_sizes[lit]);
+
+                    if (((flags & 1) == 1) or (i >= lz_code_buf.len)) {
+                        break;
+                    }
                 }
             }
+
+            try bb.flush(output);
         }
 
-        try bb.flush(output);
+        output.bits_in = 0;
+        output.bit_buffer = 0;
+        while (bb.bits_in > 0) {
+            //bb.dump();
+            const n = MIN(u6, bb.bits_in, 16);
+            output.put_bits(truncmask(u32, bb.bit_buffer) & BITMASKS[n], n);
+            bb.bit_buffer >>= n;
+            bb.bits_in -= n;
+        }
+
+        // Output the end of block symbol.
+        //warn("Output the end of block symbol\n");
+        output.put_bits(huff.litlen.codes[256], huff.litlen.code_sizes[256]);
+        //warn("Output the end of block symbol\n");
+
+        return true;
     }
-
-    output.bits_in = 0;
-    output.bit_buffer = 0;
-    while (bb.bits_in != 0) {
-        const n = MIN(u6, bb.bits_in, 16);
-        output.put_bits(@truncate(u32, bb.bit_buffer & BITMASKS[n]), n);
-        bb.bit_buffer >>= n;
-        bb.bits_in -= n;
-    }
-
-    // Output the end of block symbol.
-    output.put_bits(huff.tables[0].codes[256], huff.tables[0].code_sizes[256]);
-
-    return true;
-}
-
-
-fn compress_block(huff: *Huffman, output: *OutputBuffer, lz: *LZ,
-                  static_block: bool) !bool {
-    if (static_block) {
-        huff.start_static_block(output);
-    } else {
-        try huff.start_dynamic_block(output);
-    }
-
-    return compress_lz_codes(huff, output, lz.codes[0..lz.code_position]);
-}
 
 fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
+    //warn("flush_block\n");
     var saved_buffer: SavedOutputBuffer = undefined;
     {
-        callback.dump();
+        //callback.dump();
         var output = callback.new_output_buffer(
             &d.params.local_buf.b,
             d.params.out_buf_ofs,
@@ -1574,7 +1661,7 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
         if (!use_raw_block) {
             const use_static = ((d.params.flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) != 0) or
                 (d.lz.total_bytes < 48);
-            comp_success = try compress_block(&d.huff, &output, &d.lz, use_static);
+            comp_success = try d.huff.compress_block(&output, &d.lz, use_static);
         }
 
         // If we failed to compress anything and the output would take up more space than the output
@@ -1612,7 +1699,7 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
             }
         } else if (!comp_success) {
             output.load(saved_buffer);
-            _ = compress_block(&d.huff, &output, &d.lz, true);
+            _ = d.huff.compress_block(&output, &d.lz, true);
         }
 
         if (flush != TDEFLFlush.None) {
@@ -1635,8 +1722,8 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
             }
         }
 
-        setmem(u16, d.huff.tables[0].count[0..MAX_HUFF_SYMBOLS_0], 0);
-        setmem(u16, d.huff.tables[1].count[0..MAX_HUFF_SYMBOLS_1], 0);
+        setmem(u16, d.huff.litlen.count[0..MAX_HUFF_SYMBOLS_0], 0);
+        setmem(u16, d.huff.dist.count[0..MAX_HUFF_SYMBOLS_1], 0);
 
         d.lz.code_position = 1;
         d.lz.flag_position = 0;
@@ -1655,18 +1742,19 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
 }
 
 fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
-    warn("record_literal(*, {c}/{x})", lit, lit);
+    //warn("record_literal(*, {c}/{x})\n", lit, lit);
+    //lz.dump();
     lz.total_bytes += 1;
     lz.write_code(lit);
 
     (lz.get_flag()).* >>= 1;
     lz.consume_flag();
 
-    h.tables[0].count[lit] += 1;
+    h.litlen.count[lit] += 1;
 }
 
 fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
-    warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
+    //warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
     var match_len = pmatch_len;
     var match_dist = pmatch_dist;
     assert(match_len >= MIN_MATCH_LEN);
@@ -1676,22 +1764,23 @@ fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
     lz.total_bytes += match_len;
     match_dist -= 1;
     match_len -= MIN_MATCH_LEN;
-    lz.write_code(@truncate(u8, match_len & 0xff));
-    lz.write_code(@truncate(u8, match_dist & 0xff));
-    lz.write_code(@truncate(u8, match_dist >> 8));
+    assert(match_len < 256);
+    lz.write_code(truncmask(u8, match_len));
+    lz.write_code(truncmask(u8, match_dist));
+    lz.write_code(truncmask(u8, match_dist >> 8));
 
     (lz.get_flag()).* >>= 1;
     (lz.get_flag()).* |= 0x80;
     lz.consume_flag();
 
-    var symbol = if (match_dist < 512) SMALL_DIST_SYM[match_dist]
-    else LARGE_DIST_SYM[((match_dist >> 8) & 127)];
-    h.tables[1].count[symbol] += 1;
-    h.tables[0].count[LEN_SYM[match_len]] += 1;
+    var symbol = if (match_dist < 512) SMALL_DIST_SYM[match_dist] else LARGE_DIST_SYM[((match_dist >> 8) & 127)];
+    h.dist.count[symbol] += 1;
+    h.litlen.count[LEN_SYM[match_len]] += 1;
 }
 
 fn compress_normal(d: *Compressor, callback: *Callback) bool {
-    callback.dump();
+    //warn("compress_normal\n");
+    //callback.dump();
     var src_pos = d.params.src_pos;
     var in_buf = callback.in_buf;
 
@@ -1704,7 +1793,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
     while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None) and (lookahead_size != 0))) {
         const src_buf_left = in_buf.len - src_pos;
         const num_bytes_to_process =
-            MIN(u32, @truncate(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
+            MIN(u32, truncmask(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
 
         if ((lookahead_size + d.dict.size) >= (MIN_MATCH_LEN - 1) and (num_bytes_to_process > 0)) {
             var dictb = &d.dict.b;
@@ -1735,16 +1824,16 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
                 const dst_pos = (lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK;
                 dictb.dict[dst_pos] = c;
-                warn("c={c}, dst_pos={}\n", c, dst_pos);
+                //warn("c={c}, dst_pos={}\n", c, dst_pos);
                 if (dst_pos < (MAX_MATCH_LEN - 1)) {
                      dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
-                    warn("c={c}, dst_pos={}\n", c, dst_pos + LZ_DICT_SIZE);
+                    //warn("c={c}, dst_pos={}\n", c, dst_pos + LZ_DICT_SIZE);
                 }
 
                 lookahead_size += 1;
                 if ((lookahead_size + d.dict.size) >= MIN_MATCH_LEN) {
                     const ins_pos = lookahead_pos + lookahead_size - 3;
-                    warn("ins_pos={}\n", ins_pos);
+                    //warn("ins_pos={}\n", ins_pos);
                     const hash =
                         ((u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
                           (LZ_HASH_SHIFT * 2)) ^
@@ -1791,7 +1880,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
                 cur_match_dist,
                 cur_match_len,
             );
-            dist_len.dump();
+            //dist_len.dump();
             cur_match_dist = dist_len.distance;
             cur_match_len = dist_len.length;
         }
@@ -1803,8 +1892,8 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             cur_match_len = 0;
         }
 
-        warn("cur_match_len={}, saved_match_len={}, saved_match_dist={}\n",
-             cur_match_len, saved_match_len, saved_match_dist);
+        //warn("cur_match_len={}, saved_match_len={}, saved_match_dist={}\n",
+        //     cur_match_len, saved_match_len, saved_match_dist);
         if (saved_match_len != 0) {
             if (cur_match_len > saved_match_len) {
                 record_literal(&d.huff, &d.lz, saved_lit);
@@ -1881,6 +1970,232 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
 }
 
 
+const COMP_FAST_LOOKAHEAD_SIZE: u32 = 4096;
+
+fn compress_fast(d: *Compressor, callback: *Callback)  bool {
+    warn("comporess_fast\n");
+    var src_pos = d.params.src_pos;
+    var lookahead_size = d.dict.lookahead_size;
+    var lookahead_pos = d.dict.lookahead_pos;
+
+    var cur_pos = lookahead_pos & LZ_DICT_SIZE_MASK;
+    // let in_buf = match callback.in_buf {
+    //     None => return true,
+    //     Some(in_buf) => in_buf,
+    // };
+
+    assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
+
+    // while src_pos < in_buf.len() || (d.params.flush != TDEFLFlush::None && lookahead_size > 0) {
+    //     let mut dst_pos = ((lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK) as usize;
+    //     let mut num_bytes_to_process = cmp::min(
+    //         in_buf.len() - src_pos,
+    //         (COMP_FAST_LOOKAHEAD_SIZE - lookahead_size) as usize,
+    //     );
+    //     lookahead_size += num_bytes_to_process as u32;
+
+    //     while num_bytes_to_process != 0 {
+    //         let n = cmp::min(LZ_DICT_SIZE - dst_pos, num_bytes_to_process);
+    //         d.dict.b.dict[dst_pos..dst_pos + n].copy_from_slice(&in_buf[src_pos..src_pos + n]);
+
+    //         if dst_pos < MAX_MATCH_LEN - 1 {
+    //             let m = cmp::min(n, MAX_MATCH_LEN - 1 - dst_pos);
+    //             d.dict.b.dict[dst_pos + LZ_DICT_SIZE..dst_pos + LZ_DICT_SIZE + m]
+    //                 .copy_from_slice(&in_buf[src_pos..src_pos + m]);
+    //         }
+
+    //         src_pos += n;
+    //         dst_pos = (dst_pos + n) & LZ_DICT_SIZE_MASK as usize;
+    //         num_bytes_to_process -= n;
+    //     }
+
+    //     d.dict.size = cmp::min(LZ_DICT_SIZE as u32 - lookahead_size, d.dict.size);
+    //     if d.params.flush == TDEFLFlush::None && lookahead_size < COMP_FAST_LOOKAHEAD_SIZE {
+    //         break;
+    //     }
+
+    //     while lookahead_size >= 4 {
+    //         let mut cur_match_len = 1;
+    //         // # Unsafe
+    //         // cur_pos is always masked when assigned to.
+    //         let first_trigram = unsafe {
+    //             u32::from_le(d.dict.read_unaligned::<u32>(cur_pos as isize)) & 0xFF_FFFF
+    //         };
+
+    //         let hash = (first_trigram ^ (first_trigram >> (24 - (LZ_HASH_BITS - 8)))) &
+    //             LEVEL1_HASH_SIZE_MASK;
+
+    //         let mut probe_pos = d.dict.b.hash[hash as usize] as u32;
+    //         d.dict.b.hash[hash as usize] = lookahead_pos as u16;
+
+    //         let mut cur_match_dist = (lookahead_pos - probe_pos) as u16;
+    //         if cur_match_dist as u32 <= d.dict.size {
+    //             probe_pos &= LZ_DICT_SIZE_MASK;
+    //             // # Unsafe
+    //             // probe_pos was just masked so it can't exceed the dictionary size + max_match_len.
+    //             let trigram = unsafe {
+    //                 u32::from_le(d.dict.read_unaligned::<u32>(probe_pos as isize)) & 0xFF_FFFF
+    //             };
+
+    //             if first_trigram == trigram {
+    //                 // Trigram was tested, so we can start with "+ 3" displacement.
+    //                 let mut p = (cur_pos + 3) as isize;
+    //                 let mut q = (probe_pos + 3) as isize;
+    //                 cur_match_len = 'find_match: loop {
+    //                     for _ in 0..32 {
+    //                         // # Unsafe
+    //                         // This loop has a fixed counter, so p_data and q_data will never be
+    //                         // increased beyond 251 bytes past the initial values.
+    //                         // Both pos and probe_pos are bounded by masking with
+    //                         // LZ_DICT_SIZE_MASK,
+    //                         // so {pos|probe_pos} + 258 will never exceed dict.len().
+    //                         // (As long as dict is padded by one additional byte to have
+    //                         // 259 bytes of lookahead since we start at cur_pos + 3.)
+    //                         let p_data: u64 =
+    //                             unsafe {u64::from_le(d.dict.read_unaligned(p as isize))};
+    //                         let q_data: u64 =
+    //                             unsafe {u64::from_le(d.dict.read_unaligned(q as isize))};
+    //                         let xor_data = p_data ^ q_data;
+    //                         if xor_data == 0 {
+    //                             p += 8;
+    //                             q += 8;
+    //                         } else {
+    //                             let trailing = xor_data.trailing_zeros();
+    //                             break 'find_match p as u32 - cur_pos + (trailing >> 3);
+    //                         }
+    //                     }
+
+    //                     break 'find_match if cur_match_dist == 0 {
+    //                         0
+    //                     } else {
+    //                         MAX_MATCH_LEN as u32
+    //                     };
+    //                 };
+
+    //                 if cur_match_len < MIN_MATCH_LEN ||
+    //                     (cur_match_len == MIN_MATCH_LEN && cur_match_dist >= 8 * 1024)
+    //                 {
+    //                     let lit = first_trigram as u8;
+    //                     cur_match_len = 1;
+    //                     d.lz.write_code(lit);
+    //                     *d.lz.get_flag() >>= 1;
+    //                     d.huff.count[0][lit as usize] += 1;
+    //                 } else {
+    //                     // Limit the match to the length of the lookahead so we don't create a match
+    //                     // that ends after the end of the input data.
+    //                     cur_match_len = cmp::min(cur_match_len, lookahead_size);
+    //                     debug_assert!(cur_match_len >= MIN_MATCH_LEN);
+    //                     debug_assert!(cur_match_dist >= 1);
+    //                     debug_assert!(cur_match_dist as usize <= LZ_DICT_SIZE);
+    //                     cur_match_dist -= 1;
+
+    //                     d.lz.write_code((cur_match_len - MIN_MATCH_LEN) as u8);
+    //                     // # Unsafe
+    //                     // code_position is checked to be smaller than the lz buffer size
+    //                     // at the start of this function and on every loop iteration.
+    //                     unsafe {
+    //                         write_u16_le_uc(cur_match_dist as u16,
+    //                                         &mut d.lz.codes,
+    //                                         d.lz.code_position);
+    //                         d.lz.code_position += 2;
+    //                     }
+
+    //                     *d.lz.get_flag() >>= 1;
+    //                     *d.lz.get_flag() |= 0x80;
+    //                     if cur_match_dist < 512 {
+    //                         d.huff.count[1][SMALL_DIST_SYM[cur_match_dist as usize] as
+    //                                             usize] += 1;
+    //                     } else {
+    //                         d.huff.count[1][LARGE_DIST_SYM[(cur_match_dist >> 8) as usize] as
+    //                                             usize] += 1;
+    //                     }
+
+    //                     d.huff.count[0][LEN_SYM[(cur_match_len - MIN_MATCH_LEN) as
+    //                                                       usize] as
+    //                                         usize] += 1;
+    //                 }
+    //             } else {
+    //                 d.lz.write_code(first_trigram as u8);
+    //                 *d.lz.get_flag() >>= 1;
+    //                 d.huff.count[0][first_trigram as u8 as usize] += 1;
+    //             }
+
+    //             d.lz.consume_flag();
+    //             d.lz.total_bytes += cur_match_len;
+    //             lookahead_pos += cur_match_len;
+    //             d.dict.size = cmp::min(d.dict.size + cur_match_len, LZ_DICT_SIZE as u32);
+    //             cur_pos = (cur_pos + cur_match_len) & LZ_DICT_SIZE_MASK;
+    //             assert!(lookahead_size >= cur_match_len);
+    //             lookahead_size -= cur_match_len;
+
+    //             if d.lz.code_position > LZ_CODE_BUF_SIZE - 8 {
+    //                 // These values are used in flush_block, so we need to write them back here.
+    //                 d.dict.lookahead_size = lookahead_size;
+    //                 d.dict.lookahead_pos = lookahead_pos;
+
+    //                 let n = match flush_block(d, callback, TDEFLFlush::None) {
+    //                     Err(_) => {
+    //                         d.params.src_pos = src_pos;
+    //                         d.params.prev_return_status = TDEFLStatus::PutBufFailed;
+    //                         return false;
+    //                     }
+    //                     Ok(status) => status,
+    //                 };
+    //                 if n != 0 {
+    //                     d.params.src_pos = src_pos;
+    //                     return n > 0;
+    //                 }
+    //                 assert!(d.lz.code_position < LZ_CODE_BUF_SIZE - 2);
+
+    //                 lookahead_size = d.dict.lookahead_size;
+    //                 lookahead_pos = d.dict.lookahead_pos;
+    //             }
+    //         }
+    //     }
+
+    //     while lookahead_size != 0 {
+    //         let lit = d.dict.b.dict[cur_pos as usize];
+    //         d.lz.total_bytes += 1;
+    //         d.lz.write_code(lit);
+    //         *d.lz.get_flag() >>= 1;
+    //         d.lz.consume_flag();
+
+    //         d.huff.count[0][lit as usize] += 1;
+    //         lookahead_pos += 1;
+    //         d.dict.size = cmp::min(d.dict.size + 1, LZ_DICT_SIZE as u32);
+    //         cur_pos = (cur_pos + 1) & LZ_DICT_SIZE_MASK;
+    //         lookahead_size -= 1;
+
+    //         if d.lz.code_position > LZ_CODE_BUF_SIZE - 8 {
+    //             // These values are used in flush_block, so we need to write them back here.
+    //             d.dict.lookahead_size = lookahead_size;
+    //             d.dict.lookahead_pos = lookahead_pos;
+
+    //             let n = match flush_block(d, callback, TDEFLFlush::None) {
+    //                 Err(_) => {
+    //                     d.params.prev_return_status = TDEFLStatus::PutBufFailed;
+    //                     d.params.src_pos = src_pos;
+    //                     return false;
+    //                 }
+    //                 Ok(status) => status,
+    //             };
+    //             if n != 0 {
+    //                 d.params.src_pos = src_pos;
+    //                 return n > 0;
+    //             }
+
+    //             lookahead_size = d.dict.lookahead_size;
+    //             lookahead_pos = d.dict.lookahead_pos;
+    //         }
+    //     }
+    // }
+
+    d.params.src_pos = src_pos;
+    d.dict.lookahead_size = lookahead_size;
+    d.dict.lookahead_pos = lookahead_pos;
+    return true;
+}
+
 /// Main compression function. Puts output into buffer.
 ///
 /// # Returns
@@ -1888,16 +2203,19 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
 /// in the input buffer and the current position in the output buffer.
 pub fn compress(d: *Compressor, in_buf: []u8, out_buf: []u8,
                 flush: TDEFLFlush) ReturnTuple {
+    //warn("compress\n");
     var callback = Callback.new_callback_buf(in_buf, out_buf);
+    //callback.dump();
     return compress_inner(d, &callback, flush);
 }
 
 fn flush_output_buffer(cb: *Callback, p: *Params) ReturnTuple {
+    //warn("flush_output_buffer remaining={}\n", p.flush_remaining);
     var res = ReturnTuple.new(TDEFLStatus.Okay, p.src_pos, 0);
     //if let CallbackOut::Buf(ref mut cb) = c.out {
     const n = MIN(usize, cb.out.len - p.out_buf_ofs, p.flush_remaining);
-    cb.dump();
-    warn("flush_output_buffer n={}\n", n);
+    //cb.dump();
+    //warn("flush_output_buffer n={}\n", n);
     if (n > 0) {
         //     (&mut cb.out_buf[p.out_buf_ofs..p.out_buf_ofs + n])
         //         .copy_from_slice(&p.local_buf.b[p.flush_ofs as usize..p.flush_ofs as usize + n]);
@@ -1918,6 +2236,7 @@ fn flush_output_buffer(cb: *Callback, p: *Params) ReturnTuple {
 
 fn compress_inner(d: *Compressor, callback: *Callback,
                   pflush: TDEFLFlush) ReturnTuple {
+    //warn("compress_inner\n");
     var res: ReturnTuple = undefined;
     var flush = pflush;
     d.params.out_buf_ofs = 0;
@@ -1941,30 +2260,28 @@ fn compress_inner(d: *Compressor, callback: *Callback,
 
     const one_probe = (d.params.flags & MAX_PROBES_MASK) == 1;
     const greedy = (d.params.flags & TDEFL_GREEDY_PARSING_FLAG) != 0;
-    const filter_or_rle_or_raw = (d.params.flags &
-        (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) !=
-        0;
+    const filter_or_rle_or_raw = (d.params.flags & (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) != 0;
 
-    //const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
-    //    compress_fast(d, callback) else compress_normal(d, callback);
+    const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
+        compress_fast(d, callback) else compress_normal(d, callback);
 
-    const compress_success = compress_normal(d, callback);
     if (!compress_success) {
         return ReturnTuple.new(d.params.prev_return_status, d.params.src_pos, d.params.out_buf_ofs);
     }
 
     //if let Some(in_buf) = callback.in_buf {
         if ((d.params.flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) != 0) {
-            //d.params.adler32 = update_adler32(d.params.adler32, &in_buf[..d.params.src_pos]);
+            d.params.adler32 = adler32(d.params.adler32, callback.in_buf[0..d.params.src_pos]);
         }
     //}
 
     callback.dump();
 
     const flush_none = (d.params.flush == TDEFLFlush.None);
-    const in_left = 0; //callback.in_buf.map_or(0, |buf| buf.len()) - d.params.src_pos;
+    const in_left = callback.in_buf.len - d.params.src_pos; //callback.in_buf.map_or(0, |buf| buf.len()) - d.params.src_pos;
     const remaining = (in_left != 0) or (d.params.flush_remaining != 0);
     if (!flush_none and (d.dict.lookahead_size == 0) and !remaining) {
+        //warn("remaining={}\n", remaining);
         flush = d.params.flush;
         var n: error!u32 = flush_block(d, callback, flush);
         warn("n={}\n", n);
@@ -2021,19 +2338,89 @@ test "Read U16" {
     assert(v == 0x07d0);
 }
 
-// test "Default Huffman" {
-//     var h = DefaultHuffman();
-//     warn("sizeof HuffmanEntry={}\n", usize(@sizeOf(HuffmanEntry)));
-//     warn("sizeof Huffman={}\n", usize(@sizeOf(Huffman)));
-//     h.start_static_block();
-// }
+test "Default Huffman" {
+    var h = Huffman.init();
+    warn("sizeof HuffmanEntry={}\n", usize(@sizeOf(HuffmanEntry)));
+    warn("sizeof Huffman={}\n", usize(@sizeOf(Huffman)));
+    warn("sizeof LZ={}\n", usize(@sizeOf(LZ)));
+    // h.start_static_block();
+}
 
 test "Compressor" {
-    var c = Compressor.new(9);
-    var input = "Deflate late";
-    warn("Compressing '{}'\n", input);
-    var output = []u8 {0} ** 1024;
+    warn("Testing Compressor\n");
+    var c: Compressor = undefined;
+    c.initialize(TDEFL_WRITE_ZLIB_HEADER | 9);
+    var input = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff";
+    var inputa = "abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|0123456789|0123456789|0123456789|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|0123456789|0123456789|0123456789|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqrstuvxyz|abcdefghijklmnopqr|ABC";
+        
+    var x = \\Lorem ipsum dolor sit amet consectetur adipiscing elit integer, cursus
+        \\id augue ligula condimentum nostra aliquam. Massa id porttitor mauris
+        \\viverra dis mollis pretium interdum morbi euismod suspendisse platea
+        \\inceptos, condimentum sociis molestie tincidunt pulvinar accumsan nisi
+        \\nibh justo curae eros aliquet, magnis placerat dui sem lobortis sed
+        \\torquent non eu scelerisque facilisi vivamus. Porttitor pretium vitae
+        \\rutrum eros tortor curabitur suspendisse ac odio, mus massa quisque
+        \\ultrices a morbi taciti accumsan aliquet euismod, vel sed in et
+        \\placerat augue porta libero.
+        \\
+        \\Ac metus phasellus turpis bibendum et commodo sem class auctor augue,
+        \\vulputate mauris mattis malesuada primis habitant laoreet nascetur
+        \\etiam montes scelerisque, rhoncus venenatis congue suscipit nunc eget
+        \\eros sodales parturient. Dis orci placerat diam rutrum suscipit
+        \\quisque feugiat mollis, enim lacinia hac ac turpis tellus dui, sem
+        \\duis potenti ad sapien proin commodo. Blandit justo elementum nulla
+        \\dis facilisi sollicitudin vel curae venenatis, eros ac porta euismod
+        \\taciti proin convallis suspendisse, vestibulum quis aliquet primis
+        \\senectus quam commodo montes.
+        ;
+    // '78 9c 73 49 4d cb 49 2c 49 55 00 11 00 1c ad 04 7c'
+    // "\x78\x01\x73\x49\x4d\xcb\x49\x2c\x49\x55\x00 \x12 \x00 adler32"
+    // In [8]: zlib.compress("The quick brown fox jumps over the lazy dog").encode('hex')                             
+    // Out[8]: '789c0bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228014ae72456552aa4e4a703005bdc0fda' 
+    warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
+    var output = []u8 {0} ** 2000;
     var r = compress(&c, input[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    warn("\"");
+    for (output) |b, i| {
+        warn("\\x{x02}", b);
+        if (i > r.outpos) {
+            break;
+        }
+    }
+    warn("\"\n");
     warn("done..{}\n", @enumToInt(builtin.mode));
 }
 
+test "Compress File" {
+    const os = std.os;
+    const io = std.io;
+    var raw_bytes: [4 * 1024]u8 = undefined;
+    var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
+    const tmp_file_name = "input.txt";
+    var file = try os.File.openRead(allocator, tmp_file_name);
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+
+    warn("File has {} bytes\n", file_size);
+    var file_in_stream = io.FileInStream.init(&file);
+    var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
+    const st = &buf_stream.stream;
+    const contents = try st.readAllAlloc(allocator, 2 * 1024);
+    warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
+    defer allocator.free(contents);
+
+    var c: Compressor = undefined;
+    c.initialize(TDEFL_WRITE_ZLIB_HEADER | 9);
+
+    var output = []u8 {0} ** (2 * 1024);
+    var r = compress(&c, contents[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    for (output) |b, i| {
+        warn("\\x{x02}", b);
+        if (i > r.outpos) {
+            break;
+        }
+    }
+}
