@@ -225,6 +225,13 @@ pub const TDEFL_FILTER_MATCHES: u32 = 0x00020000;
 pub const TDEFL_FORCE_ALL_STATIC_BLOCKS: u32 = 0x00040000;
 /// Force the compressor to only output raw/uncompressed blocks.
 pub const TDEFL_FORCE_ALL_RAW_BLOCKS: u32 = 0x00080000;
+
+fn LZ_DICT_POS(pos: u32) u32 {
+    return pos &  u32(LZ_DICT_SIZE_MASK);
+}
+
+const COMP_FAST_LOOKAHEAD_SIZE: u32 = 4096;
+
 //}
 /// Used to generate deflate flags with `create_comp_flags_from_zip_params`.
 //#[repr(i32)]
@@ -253,7 +260,7 @@ pub const TDEFLFlush = extern enum {
     Full = 3,
     Finish = 4,
 
-    fn fromu32(flush: u32) !Self {
+    fn from_u32(flush: u32) !Self {
         return switch (flush) {
             0 => TDEFLFlush.None,
             2 => TDEFLFlush.Sync,
@@ -310,7 +317,7 @@ fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
 
         mem.swap(@typeOf(current_symbols), &current_symbols, &new_symbols);
     }
-    if (debug == false) {
+    if (debug) {
         for (current_symbols) |*sym, ii| {
             warn("sym[{}]", ii); sym.*.dump();
         }
@@ -390,7 +397,7 @@ fn calculate_minimum_redundancy(symbols: []SymFreq) void {
 
 // argh, overflowing, num_codes was i32
 fn enforce_max_code_size(num_codes: []i32, code_list_len: usize, max_code_size: usize) void {
-    if (debug == false) {
+    if (debug) {
         warn("num_codes.len={}, code_list_len={}, max_code_size={}\n",
              num_codes.len, code_list_len, max_code_size);
     }
@@ -410,7 +417,7 @@ fn enforce_max_code_size(num_codes: []i32, code_list_len: usize, max_code_size: 
     var total: u32 = 0;
     var i: usize = max_code_size;
     while (i >= 1) : (i -= 1) {
-        total += (@bitCast(u32, num_codes[i]) << @truncate(u5, i));
+        total += (@bitCast(u32, num_codes[i]) << @truncate(u5, max_code_size - i));
     }
 
     // for _ in (1 << max_code_size)..total {
@@ -430,16 +437,16 @@ fn enforce_max_code_size(num_codes: []i32, code_list_len: usize, max_code_size: 
 }
 
 test "tdefl flush" {
-    var flush = TDEFLFlush.fromu32(0) catch TDEFLFlush.Finish;
+    var flush = TDEFLFlush.from_u32(0) catch TDEFLFlush.Finish;
     assert(flush == TDEFLFlush.None);
-    flush = TDEFLFlush.fromu32(2) catch TDEFLFlush.None;
+    flush = TDEFLFlush.from_u32(2) catch TDEFLFlush.None;
     assert(flush == TDEFLFlush.Sync);
-    flush = TDEFLFlush.fromu32(3) catch TDEFLFlush.None;
+    flush = TDEFLFlush.from_u32(3) catch TDEFLFlush.None;
     assert(flush == TDEFLFlush.Full);
-    flush = TDEFLFlush.fromu32(4) catch TDEFLFlush.None;
+    flush = TDEFLFlush.from_u32(4) catch TDEFLFlush.None;
     assert(flush == TDEFLFlush.Finish);
-    assertError(TDEFLFlush.fromu32(1), error.BadParam);
-    assertError(TDEFLFlush.fromu32(5), error.BadParam);
+    assertError(TDEFLFlush.from_u32(1), error.BadParam);
+    assertError(TDEFLFlush.from_u32(5), error.BadParam);
 }
 
 // impl From<MZFlush> for TDEFLFlush {
@@ -624,7 +631,7 @@ pub const HuffmanEntry = struct {
 
 };
 
-/// Tables used for literal/lengths in `Huffman`.
+/// Tables used for literal/lengths in `Huffman`. !!!NO LONGER USED!!!
 const LITLEN_TABLE = 0;
 /// Tables for distances.
 const DIST_TABLE = 1;
@@ -839,6 +846,42 @@ pub const Huffman = struct {
         if (debug) warn("packed_code_size_index={}\n", packed_code_size_index);
     }
 
+    fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
+        if (debug) warn("record_literal(*, {c}/{x})\n", lit, lit);
+        //lz.dump();
+        lz.total_bytes += 1;
+        lz.write_code(lit);
+
+        (lz.get_flag()).* >>= 1;
+        lz.consume_flag();
+
+        h.litlen.count[lit] += 1;
+    }
+
+    fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
+        if (debug) warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
+        var match_len = pmatch_len;
+        var match_dist = pmatch_dist;
+        assert(match_len >= MIN_MATCH_LEN);
+        assert(match_dist >= 1);
+        assert(match_dist <= LZ_DICT_SIZE);
+
+        lz.total_bytes += match_len;
+        match_dist -= 1;
+        match_len -= MIN_MATCH_LEN;
+        assert(match_len < 256);
+        lz.write_code(@truncate(u8, match_len));
+        lz.write_code(@truncate(u8, match_dist));
+        lz.write_code(@truncate(u8, match_dist >> 8));
+
+        (lz.get_flag()).* >>= 1;
+        (lz.get_flag()).* |= 0x80;
+        lz.consume_flag();
+
+        var symbol = if (match_dist < 512) SMALL_DIST_SYM[match_dist] else LARGE_DIST_SYM[((match_dist >> 8) & 127)];
+        h.dist.count[symbol] += 1;
+        h.litlen.count[LEN_SYM[match_len]] += 1;
+    }
 };
 
 
@@ -1313,7 +1356,7 @@ pub const RLE = struct {
                 //                         usize],
                 // )?;
                 var ary = [3]u8 {code, code, code};
-                warn("repeat_count={}\n", self.repeat_count);
+                //warn("repeat_count={}\n", self.repeat_count);
                 try packed_code_sizes.write_all(ary[0..self.repeat_count]);
             } else {
                 counts.*[16] +%=  1;
@@ -1482,6 +1525,21 @@ test "LZ" {
     const lz = LZ.init();
 }
 
+const CompressionResult = struct {
+    const Self = this;
+    status: TDEFLStatus,
+    inpos: usize,
+    outpos: usize,
+
+    fn dump(self: *Self) void {
+        warn("inpos={}, outpos={}, status={}\n", self.inpos, self.outpos, @enumToInt(self.status));
+    }
+
+    fn new(status: TDEFLStatus, inpos: usize, outpos: usize) Self {
+        return CompressionResult {.status = status, .inpos= inpos, .outpos = outpos};
+    }
+};
+
 /// Main compression struct.
 pub const Compressor = struct {
     const Self = this;
@@ -1520,26 +1578,621 @@ pub const Compressor = struct {
     pub fn compress(self: *Self, in_buf: []u8, out_buf: []u8,
                     flush: TDEFLFlush) CompressionResult {
         var callback = Callback.new_callback_buf(in_buf, out_buf);
-        return compress_inner(self, &callback, flush);
+        return self.compress_inner(&callback, flush);
     }
 
+    fn compress_fast(d: *Compressor, callback: *Callback) bool {
+        if (debug) warn("compress_fast\n");
+        var src_pos = d.params.src_pos;
+        var lookahead_size = d.dict.lookahead_size;
+        var lookahead_pos = d.dict.lookahead_pos;
+
+        var cur_pos = lookahead_pos & LZ_DICT_SIZE_MASK;
+        const in_buf = if (callback.in_buf) |buf|  buf else return true;
+
+        assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
+
+        while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None)
+                                          and (lookahead_size > 0))) {
+            var dst_pos: usize = ((lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK);
+            var num_bytes_to_process = MIN(usize, in_buf.len - src_pos,
+                                           (COMP_FAST_LOOKAHEAD_SIZE - lookahead_size));
+            lookahead_size += @truncate(@typeOf(lookahead_size), num_bytes_to_process);
+
+            while (num_bytes_to_process != 0) {
+                const n = MIN(usize, LZ_DICT_SIZE - dst_pos, num_bytes_to_process);
+                //d.dict.b.dict[dst_pos..dst_pos + n].copy_from_slice(&in_buf[src_pos..src_pos + n]);
+                for (in_buf[src_pos..src_pos + n]) |*b, ii| {
+                    d.dict.b.dict[dst_pos + ii] = b.*;
+                }
+
+                if (dst_pos < (MAX_MATCH_LEN - 1)) {
+                    const m = MIN(usize, n, MAX_MATCH_LEN - 1 - dst_pos);
+                    // d.dict.b.dict[dst_pos + LZ_DICT_SIZE..dst_pos + LZ_DICT_SIZE + m]
+                    //     .copy_from_slice(&in_buf[src_pos..src_pos + m]);
+                    for (in_buf[src_pos..src_pos + m]) |*b, ii| {
+                        d.dict.b.dict[dst_pos + LZ_DICT_SIZE + ii] = b.*;
+                    }
+                }
+
+                src_pos += n;
+                dst_pos = (dst_pos + n) & LZ_DICT_SIZE_MASK;
+                num_bytes_to_process -= n;
+            }
+
+            d.dict.size = MIN(u32, LZ_DICT_SIZE - lookahead_size, d.dict.size);
+            if ((d.params.flush == TDEFLFlush.None) and (lookahead_size < COMP_FAST_LOOKAHEAD_SIZE)) {
+                break;
+            }
+
+            while (lookahead_size >= 4) {
+                var cur_match_len: u32 = 1;
+                // # Unsafe
+                // cur_pos is always masked when assigned to.
+                //         let first_trigram = unsafe {
+                //             u32::from_le(d.dict.read_unaligned::<u32>(cur_pos as isize)) & 0xFF_FFFF
+                //         };
+                var first_trigram: u32 = d.dict.read_unaligned(u32, cur_pos) & 0xFFFFFF;
+
+                const hash = (first_trigram ^ (first_trigram >> (24 - (LZ_HASH_BITS - 8)))) &
+                    LEVEL1_HASH_SIZE_MASK;
+
+                var probe_pos: u32 = d.dict.b.hash[hash];
+                d.dict.b.hash[hash] = @truncate(u16, lookahead_pos);
+
+                var cur_match_dist = @truncate(u16, lookahead_pos - probe_pos);
+                if (cur_match_dist <= d.dict.size) {
+                    probe_pos &= LZ_DICT_SIZE_MASK;
+                    // # Unsafe
+                    // probe_pos was just masked so it can't exceed the dictionary size + max_match_len.
+                    // let trigram = unsafe {
+                    //     u32::from_le(d.dict.read_unaligned::<u32>(probe_pos as isize)) & 0xFF_FFFF
+                    // };
+                    var trigram = d.dict.read_unaligned(u32, probe_pos) & 0xFFFFFF;
+
+                    if (first_trigram == trigram) {
+                        // Trigram was tested, so we can start with "+ 3" displacement.
+                        var p = (cur_pos + 3);
+                        var q = (probe_pos + 3);
+                        cur_match_len = find_match: {
+                            var i: usize = 0;
+                            while (i < 32) : (i += 1) {
+                                // # Unsafe
+                                // This loop has a fixed counter, so p_data and q_data will never be
+                                // increased beyond 251 bytes past the initial values.
+                                // Both pos and probe_pos are bounded by masking with
+                                // LZ_DICT_SIZE_MASK,
+                                // so {pos|probe_pos} + 258 will never exceed dict.len().
+                                // (As long as dict is padded by one additional byte to have
+                                // 259 bytes of lookahead since we start at cur_pos + 3.)
+                                const p_data: u64 = d.dict.read_unaligned(u64, p);
+                                //              unsafe {u64::from_le(d.dict.read_unaligned(p as isize))};
+                                const q_data: u64 = d.dict.read_unaligned(u64, q);
+                                //              unsafe {u64::from_le(d.dict.read_unaligned(q as isize))};
+                                const xor_data = p_data ^ q_data;
+                                if (xor_data == 0) {
+                                    p += 8;
+                                    q += 8;
+                                } else {
+                                    const trailing = @ctz(xor_data);
+                                    break :find_match @truncate(u32, p) - cur_pos + (trailing >> 3);
+                                }
+                            }
+
+                            if (cur_match_dist == 0) {
+                                break :find_match u32(0);
+                            } else {
+                                break :find_match u32(MAX_MATCH_LEN);
+                            }
+                        };
+
+                        if ((cur_match_len < MIN_MATCH_LEN) or ((cur_match_len == MIN_MATCH_LEN) and (cur_match_dist >= 8 * 1024)))
+                        {
+                            const lit = @truncate(u8, first_trigram);
+                            cur_match_len = 1;
+                            d.lz.write_code(lit);
+                            (d.lz.get_flag()).* >>= 1;
+                            d.huff.litlen.count[lit] += 1;
+                        } else {
+                            // Limit the match to the length of the lookahead so we don't create a match
+                            // that ends after the end of the input data.
+                            cur_match_len = MIN(@typeOf(cur_match_len), cur_match_len, lookahead_size);
+                            assert(cur_match_len >= MIN_MATCH_LEN);
+                            assert(cur_match_dist >= 1);
+                            assert(cur_match_dist <= LZ_DICT_SIZE);
+                            cur_match_dist -= 1;
+
+                            d.lz.write_code(@truncate(u8, cur_match_len - MIN_MATCH_LEN));
+                            // # Unsafe
+                            // code_position is checked to be smaller than the lz buffer size
+                            // at the start of this function and on every loop iteration.
+                            //  unsafe {
+                            write_u16_le_uc(@truncate(u16, cur_match_dist),
+                                            d.lz.codes[0..],
+                                            d.lz.code_position);
+                            d.lz.code_position += 2;
+                            //  }
+
+                            (d.lz.get_flag()).* >>= 1;
+                            (d.lz.get_flag()).* |= 0x80;
+                            if (cur_match_dist < 512) {
+                                d.huff.dist.count[SMALL_DIST_SYM[cur_match_dist]] += 1;
+                            } else {
+                                d.huff.dist.count[LARGE_DIST_SYM[(cur_match_dist >> 8)]] += 1;
+                            }
+
+                            d.huff.litlen.count[LEN_SYM[(cur_match_len - MIN_MATCH_LEN)]] += 1;
+                        }
+                    } else {
+                        d.lz.write_code(@truncate(u8, first_trigram));
+                        (d.lz.get_flag()).* >>= 1;
+                        d.huff.litlen.count[@truncate(u8, first_trigram)] += 1;
+                    }
+
+                    d.lz.consume_flag();
+                    d.lz.total_bytes += cur_match_len;
+                    lookahead_pos += cur_match_len;
+                    d.dict.size = MIN(@typeOf(d.dict.size), d.dict.size + cur_match_len, LZ_DICT_SIZE);
+                    cur_pos = (cur_pos + cur_match_len) & LZ_DICT_SIZE_MASK;
+                    assert(lookahead_size >= cur_match_len);
+                    lookahead_size -= cur_match_len;
+
+                    if (d.lz.code_position > (LZ_CODE_BUF_SIZE - 8)) {
+                        // These values are used in flush_block, so we need to write them back here.
+                        d.dict.lookahead_size = lookahead_size;
+                        d.dict.lookahead_pos = lookahead_pos;
+                        var n: u32 = 0;
+                        if (d.flush_block(callback, TDEFLFlush.None)) |nn| {
+                            n = nn;
+                            if (n != 0) {
+                                d.params.src_pos = src_pos;
+                                return n > 0;
+                            }
+                            assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
+
+                            lookahead_size = d.dict.lookahead_size;
+                            lookahead_pos = d.dict.lookahead_pos;
+                        } else |err| {
+                            d.params.src_pos = src_pos;
+                            d.params.prev_return_status = TDEFLStatus.PutBufFailed;
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            while (lookahead_size != 0) {
+                const lit = d.dict.b.dict[cur_pos];
+                d.lz.total_bytes += 1;
+                d.lz.write_code(lit);
+                (d.lz.get_flag()).* >>= 1;
+                d.lz.consume_flag();
+
+                d.huff.litlen.count[lit] += 1;
+                lookahead_pos += 1;
+                d.dict.size = MIN(@typeOf(d.dict.size), d.dict.size + 1, LZ_DICT_SIZE);
+                cur_pos = (cur_pos + 1) & LZ_DICT_SIZE_MASK;
+                lookahead_size -= 1;
+
+                if (d.lz.code_position > (LZ_CODE_BUF_SIZE - 8)) {
+                    // These values are used in flush_block, so we need to write them back here.
+                    d.dict.lookahead_size = lookahead_size;
+                    d.dict.lookahead_pos = lookahead_pos;
+
+                    var n: u32 = 0;
+                    if (d.flush_block(callback, TDEFLFlush.None)) |nn| {
+                        n = nn;
+                        if (n != 0) {
+                            d.params.src_pos = src_pos;
+                            return n > 0;
+                        }
+
+                        lookahead_size = d.dict.lookahead_size;
+                        lookahead_pos = d.dict.lookahead_pos;
+                    } else |err| {
+                        d.params.prev_return_status = TDEFLStatus.PutBufFailed;
+                        d.params.src_pos = src_pos;
+                        return false;
+                    }
+                }
+            }
+        }
+
+        d.params.src_pos = src_pos;
+        d.dict.lookahead_size = lookahead_size;
+        d.dict.lookahead_pos = lookahead_pos;
+
+        return true;
+    }
+
+    fn compress_inner(self: *Compressor, callback: *Callback,
+                      pflush: TDEFLFlush) CompressionResult {
+        if (debug) warn("compress_inner\n");
+        var res: CompressionResult = undefined;
+        var flush = pflush;
+        self.params.out_buf_ofs = 0;
+        self.params.src_pos = 0;
+
+        var prev_ok = self.params.prev_return_status == TDEFLStatus.Okay;
+        var flush_finish_once = (self.params.flush != TDEFLFlush.Finish) or (flush == TDEFLFlush.Finish);
+
+        self.params.flush = flush;
+        if (!prev_ok or !flush_finish_once) {
+            self.params.prev_return_status = TDEFLStatus.BadParam;
+            res = CompressionResult.new(self.params.prev_return_status, 0, 0);
+            return res;
+        }
+
+        if ((self.params.flush_remaining != 0) or self.params.finished) {
+            res = callback.flush_output_buffer(&self.params);
+            self.params.prev_return_status = res.status;
+            return res;
+        }
+
+        const one_probe = (self.params.flags & MAX_PROBES_MASK) == 1;
+        const greedy = (self.params.flags & TDEFL_GREEDY_PARSING_FLAG) != 0;
+        const filter_or_rle_or_raw = (self.params.flags & (TDEFL_FILTER_MATCHES
+                                                           | TDEFL_FORCE_ALL_RAW_BLOCKS
+                                                           | TDEFL_RLE_MATCHES)) != 0;
+
+        const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
+            self.compress_fast(callback) else self.compress_normal(callback);
+
+        if (!compress_success) {
+            return CompressionResult.new(self.params.prev_return_status, self.params.src_pos, self.params.out_buf_ofs);
+        }
+
+        if (callback.in_buf) |in_buf| {
+            if ((self.params.flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) != 0) {
+                self.params.adler32 = adler32(self.params.adler32, in_buf[0..self.params.src_pos]);
+            }
+        }
+
+        const flush_none = (self.params.flush == TDEFLFlush.None);
+        //const in_left = callback.in_buf.len - self.params.src_pos; //callback.in_buf.map_or(0, |buf| buf.len()) - self.params.src_pos;
+        const in_left = if (callback.in_buf) |buf| (buf.len - self.params.src_pos) else 0;
+        const remaining = (in_left != 0) or (self.params.flush_remaining != 0);
+        if (!flush_none and (self.dict.lookahead_size == 0) and !remaining) {
+            flush = self.params.flush;
+            if (self.flush_block(callback, flush)) |n| {
+                // given that we get a u32, this will never happen...investigate
+                if (n < 0) {
+                    res.status = self.params.prev_return_status;
+                    res.inpos = self.params.src_pos;
+                    res.outpos = self.params.out_buf_ofs;
+                    return res;
+                }
+                self.params.finished = self.params.flush == TDEFLFlush.Finish;
+                if (self.params.flush == TDEFLFlush.Full) {
+                    if (debug) warn("full flush\n");
+                    setmem(@typeOf(self.dict.b.hash[0]), self.dict.b.hash[0..], 0);
+                    setmem(@typeOf(self.dict.b.next[0]), self.dict.b.next[0..], 0);
+                    self.dict.size = 0;
+                }
+            } else |err| {
+                self.params.prev_return_status = TDEFLStatus.PutBufFailed;
+                res.status = self.params.prev_return_status;
+                res.inpos = self.params.src_pos;
+                res.outpos = self.params.out_buf_ofs;
+                return res;
+            }
+        }
+
+        res = callback.flush_output_buffer(&self.params);
+        self.params.prev_return_status = res.status;
+
+        return res;
+    }
+
+    fn flush_block(self: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
+        if (debug) warn("flush_block\n");
+        var saved_buffer: SavedOutputBuffer = undefined;
+        var output = callback.out.new_output_buffer(
+            &self.params.local_buf.b,
+            self.params.out_buf_ofs,
+        );
+        output.bit_buffer = self.params.saved_bit_buffer;
+        output.bits_in = self.params.saved_bits_in;
+
+        const use_raw_block = ((self.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) and
+            ((self.dict.lookahead_pos - self.dict.code_buf_dict_pos) <= self.dict.size);
+
+        assert(self.params.flush_remaining == 0);
+        self.params.flush_ofs = 0;
+        self.params.flush_remaining = 0;
+
+        self.lz.init_flag();
+
+        // If we are at the start of the stream, write the zlib header if requested.
+        if (((self.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) and (self.params.block_index == 0)) {
+            output.put_bits(0x78, 8);
+            output.put_bits(0x01, 8);
+        }
+
+        // Output the block header.
+        output.put_bits(@boolToInt(flush == TDEFLFlush.Finish), 1);
+
+        saved_buffer = output.save();
+
+        var comp_success = false;
+        if (!use_raw_block) {
+            const use_static = ((self.params.flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) != 0) or
+                (self.lz.total_bytes < 48);
+            comp_success = try self.huff.compress_block(&output, &self.lz, use_static);
+        }
+
+        // If we failed to compress anything and the output would take
+        // up more space than the output data, output a stored block
+        // instead, which has at most 5 bytes of overhead.  We only
+        // use some simple heuristics for now.  A stored block will
+        // have an overhead of at least 4 bytes containing the block
+        // length but usually more due to the length parameters having
+        // to start at a byte boundary and thus requiring up to 5
+        // bytes of padding.  As a static block will have an overhead
+        // of at most 1 bit per byte (as literals are either 8 or 9
+        // bytes), a raw block will never take up less space if the
+        // number of input bytes are less than 32.
+        const expanded = (self.lz.total_bytes > 32)
+            and ((output.inner.position() - saved_buffer.pos + 1) >= self.lz.total_bytes)
+            and ((self.dict.lookahead_pos - self.dict.code_buf_dict_pos) <= self.dict.size);
+
+        if (use_raw_block or expanded) {
+            output.load(saved_buffer);
+
+            // Block header.
+            output.put_bits(0, 2);
+
+            // Block length has to start on a byte boundary, so pad.
+            output.pad_to_bytes();
+
+            // Block length and ones complement of block length.
+            output.put_bits(self.lz.total_bytes & 0xFFFF, 16);
+            output.put_bits(~self.lz.total_bytes & 0xFFFF, 16);
+
+            // Write the actual bytes.
+            var i: usize = 0;
+            //for i in 0..self.lz.total_bytes {
+            while (i < self.lz.total_bytes) : (i += 1) {
+                const pos = (self.dict.code_buf_dict_pos + i) & LZ_DICT_SIZE_MASK;
+                output.put_bits(self.dict.b.dict[pos], 8);
+            }
+        } else if (!comp_success) {
+            output.load(saved_buffer);
+            _ = self.huff.compress_block(&output, &self.lz, true);
+        }
+
+        if (flush != TDEFLFlush.None) {
+            if (flush == TDEFLFlush.Finish) {
+                output.pad_to_bytes();
+                if ((self.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) {
+                    var adler = self.params.adler32;
+                    var i: usize = 0;
+                    //for _ in 0..4 {
+                    while (i < 4) : (i += 1) {
+                        output.put_bits((adler >> 24) & 0xFF, 8);
+                        adler <<= 8;
+                    }
+                }
+            } else {
+                output.put_bits(0, 3);
+                output.pad_to_bytes();
+                output.put_bits(0, 16);
+                output.put_bits(0xFFFF, 16);
+            }
+        }
+
+        setmem(u16, self.huff.litlen.count[0..MAX_HUFF_SYMBOLS_0], 0);
+        setmem(u16, self.huff.dist.count[0..MAX_HUFF_SYMBOLS_1], 0);
+
+        self.lz.code_position = 1;
+        self.lz.flag_position = 0;
+        self.lz.num_flags_left = 8;
+        self.dict.code_buf_dict_pos += self.lz.total_bytes;
+        self.lz.total_bytes = 0;
+        self.params.block_index += 1;
+
+        saved_buffer = output.save();
+
+        self.params.saved_bit_buffer = saved_buffer.bit_buffer;
+        self.params.saved_bits_in = saved_buffer.bits_in;
+
+        return callback.flush_output(saved_buffer, &self.params);
+    }
+
+    fn compress_normal(self: *Compressor, callback: *Callback) bool {
+        if (debug) warn("compress_normal\n");
+        var src_pos = self.params.src_pos;
+        var in_buf = if (callback.in_buf) |in_buf| in_buf else return true;
+
+        var lookahead_size = self.dict.lookahead_size;
+        var lookahead_pos = self.dict.lookahead_pos;
+        var saved_lit = self.params.saved_lit;
+        var saved_match_dist = self.params.saved_match_dist;
+        var saved_match_len = self.params.saved_match_len;
+
+        while ((src_pos < in_buf.len)
+               or ((self.params.flush != TDEFLFlush.None) and (lookahead_size != 0))) {
+            const src_buf_left = in_buf.len - src_pos;
+            const num_bytes_to_process =
+                MIN(u32, @truncate(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
+
+            if ((lookahead_size + self.dict.size) >= (MIN_MATCH_LEN - 1) and (num_bytes_to_process > 0)) {
+                var dictb = &self.dict.b;
+
+                var dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
+                var ins_pos =  LZ_DICT_POS(lookahead_pos + lookahead_size - 2);
+                var hash = (u32(dictb.dict[LZ_DICT_POS(ins_pos)]) << LZ_HASH_SHIFT)
+                    ^ (dictb.dict[LZ_DICT_POS(ins_pos + 1)]);
+
+                lookahead_size += num_bytes_to_process;
+                for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
+                    dictb.dict[dst_pos] = c;
+                    if (dst_pos < (MAX_MATCH_LEN - 1)) {
+                        dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
+                    }
+
+                    hash = ((u32(hash) << LZ_HASH_SHIFT) ^ u32(c)) & u32(LZ_HASH_SIZE - 1);
+                    dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
+
+                    dictb.hash[hash] = @truncate(u16, ins_pos & 0xffff);
+                    dst_pos = LZ_DICT_POS(dst_pos + 1);
+                    ins_pos += 1;
+                }
+                src_pos += num_bytes_to_process;
+            } else {
+                var dictb = &self.dict.b;
+                for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
+                    const dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
+                    dictb.dict[dst_pos] = c;
+                    //warn("c={c}, dst_pos={}\n", c, dst_pos);
+                    if (dst_pos < (MAX_MATCH_LEN - 1)) {
+                        dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
+                        //warn("c={c}, dst_pos={}\n", c, dst_pos + LZ_DICT_SIZE);
+                    }
+
+                    lookahead_size += 1;
+                    if ((lookahead_size + self.dict.size) >= MIN_MATCH_LEN) {
+                        const ins_pos = lookahead_pos + lookahead_size - 3;
+                        //warn("ins_pos={}\n", ins_pos);
+                        const hash =
+                            ((u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
+                              (LZ_HASH_SHIFT * 2)) ^
+                             ((u32(dictb.dict[LZ_DICT_POS(ins_pos + 1)]) << LZ_HASH_SHIFT) ^
+                              u32(c))) & u32(LZ_HASH_SIZE - 1);
+
+                        dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
+                        dictb.hash[hash] = @truncate(u16, ins_pos);
+                    }
+                }
+
+                src_pos += num_bytes_to_process;
+            }
+
+            self.dict.size = MIN(u32, LZ_DICT_SIZE - lookahead_size, self.dict.size);
+            if ((self.params.flush == TDEFLFlush.None) and ((lookahead_size) < MAX_MATCH_LEN)) {
+                break;
+            }
+
+            var len_to_move: u32 = 1;
+            var cur_match_dist: u32 = 0;
+            var cur_match_len = if (saved_match_len != 0) saved_match_len else (MIN_MATCH_LEN - 1);
+            const cur_pos = (lookahead_pos & LZ_DICT_SIZE_MASK);
+            if (self.params.flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) {
+                if ((self.dict.size != 0) and ((self.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) == 0)) {
+                    const c = self.dict.b.dict[((cur_pos -% 1) & LZ_DICT_SIZE_MASK)];
+                    var i: usize = cur_pos;
+                    var count: u32 = 0;
+                    while (i < (cur_pos + lookahead_size - 1)) : (i += 1) {
+                        if (self.dict.b.dict[i] != c) {
+                            break;
+                        }
+                        count += 1;
+                    }
+                    warn("count={}\n", count);
+                    cur_match_len = count;
+                    if (cur_match_len < MIN_MATCH_LEN) {
+                        cur_match_len = 0;
+                    } else {
+                        cur_match_dist = 1;
+                    }
+                }
+            } else {
+                const dist_len = self.dict.find_match(
+                    lookahead_pos,
+                    self.dict.size,
+                    lookahead_size,
+                    cur_match_dist,
+                    cur_match_len,
+                );
+                //dist_len.dump();
+                cur_match_dist = dist_len.distance;
+                cur_match_len = dist_len.length;
+            }
+
+            const far_and_small = (cur_match_len == MIN_MATCH_LEN)
+                and (cur_match_dist >= (8 * 1024));
+            const filter_small = (((self.params.flags & TDEFL_FILTER_MATCHES) != 0)
+                                  and (cur_match_len <= 5));
+            if (far_and_small or filter_small or (cur_pos == cur_match_dist)) {
+                cur_match_dist = 0;
+                cur_match_len = 0;
+            }
+
+            //warn("cur_match_len={}, saved_match_len={}, saved_match_dist={}\n",
+            //     cur_match_len, saved_match_len, saved_match_dist);
+            if (saved_match_len != 0) {
+                if (cur_match_len > saved_match_len) {
+                    self.huff.record_literal(&self.lz, saved_lit);
+                    if (cur_match_len >= 128) {
+                        self.huff.record_match(&self.lz, cur_match_len, cur_match_dist);
+                        saved_match_len = 0;
+                        len_to_move = cur_match_len;
+                    } else {
+                        saved_lit = self.dict.b.dict[cur_pos];
+                        saved_match_dist = cur_match_dist;
+                        saved_match_len = cur_match_len;
+                    }
+                } else {
+                    self.huff.record_match(&self.lz, saved_match_len, saved_match_dist);
+                    len_to_move = saved_match_len - 1;
+                    saved_match_len = 0;
+                }
+            } else if (cur_match_dist == 0) {
+                self.huff.record_literal(&self.lz,
+                                         self.dict.b.dict[MIN(usize, cur_pos, self.dict.b.dict.len - 1)]);
+            } else if ((self.params.greedy_parsing) or (self.params.flags & TDEFL_RLE_MATCHES != 0) or
+                       (cur_match_len >= 128))
+            {
+                // If we are using lazy matching, check for matches at the next byte if the current
+                // match was shorter than 128 bytes.
+                self.huff.record_match(&self.lz, cur_match_len, cur_match_dist);
+                len_to_move = cur_match_len;
+            } else {
+                saved_lit = self.dict.b.dict[MIN(usize, cur_pos, self.dict.b.dict.len - 1)];
+                saved_match_dist = cur_match_dist;
+                saved_match_len = cur_match_len;
+            }
+
+            lookahead_pos += len_to_move;
+            assert(lookahead_size >= len_to_move);
+            lookahead_size -= len_to_move;
+            self.dict.size = MIN(u32, self.dict.size + len_to_move, LZ_DICT_SIZE);
+
+            const lz_buf_tight = self.lz.code_position > LZ_CODE_BUF_SIZE - 8;
+            const raw = self.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS != 0;
+            const fat = ((self.lz.code_position * 115) >> 7) >= self.lz.total_bytes;
+            const fat_or_raw = (self.lz.total_bytes > 31 * 1024) and (fat or raw);
+
+            if (lz_buf_tight or fat_or_raw) {
+                self.params.src_pos = src_pos;
+                // These values are used in flush_block, so we need to write them back here.
+                self.dict.lookahead_size = lookahead_size;
+                self.dict.lookahead_pos = lookahead_pos;
+
+                const n = self.flush_block(callback, TDEFLFlush.None) catch 0;
+                //.unwrap_or(
+                //    TDEFLStatus.PutBufFailed as
+                //        i32,
+                if (n != 0) {
+                    self.params.saved_lit = saved_lit;
+                    self.params.saved_match_dist = saved_match_dist;
+                    self.params.saved_match_len = saved_match_len;
+                    return (n > 0);
+                }
+            }
+        }
+
+        self.params.src_pos = src_pos;
+        self.dict.lookahead_size = lookahead_size;
+        self.dict.lookahead_pos = lookahead_pos;
+        self.params.saved_lit = saved_lit;
+        self.params.saved_match_dist = saved_match_dist;
+        self.params.saved_match_len = saved_match_len;
+
+        return true;
+    }
 };
 
-
-const CompressionResult = struct {
-    const Self = this;
-    status: TDEFLStatus,
-    inpos: usize,
-    outpos: usize,
-
-    fn dump(self: *Self) void {
-        warn("inpos={}, outpos={}, status={}\n", self.inpos, self.outpos, @enumToInt(self.status));
-    }
-
-    fn new(status: TDEFLStatus, inpos: usize, outpos: usize) Self {
-        return CompressionResult {.status = status, .inpos= inpos, .outpos = outpos};
-    }
-};
 
 /// Compression callback function type.
 pub const PutBufFuncPtrNotNull = fn([]const u8, usize, []u8) bool;
@@ -1547,7 +2200,7 @@ pub const PutBufFuncPtrNotNull = fn([]const u8, usize, []u8) bool;
 pub const PutBufFuncPtr = ?PutBufFuncPtrNotNull;
 
 pub const CallbackFunc = struct {
-    pub put_buf_func: PutBufFuncPtrNotNull,
+    pub put_buf_func: PutBufFuncPtr,
     pub put_buf_user: []u8,
 };
 
@@ -1576,7 +2229,6 @@ const CallbackBuf = struct {
 
         return params.flush_remaining;
     }
-
 };
 
 const CallbackOut = union(enum) {
@@ -1657,6 +2309,33 @@ const Callback = struct {
             CallbackOut.Buf => |*cb| { return cb.flush_output(saved_output, params); },
             else => { return error.Bug; },
         }
+    }
+
+    fn flush_output_buffer(self: *Callback, p: *Params) CompressionResult {
+        if (debug) warn("{} flush_output_buffer remaining={}\n", self, p.flush_remaining);
+        var res = CompressionResult.new(TDEFLStatus.Okay, p.src_pos, 0);
+        switch (self.out) {
+            CallbackOut.Buf => |ob| {
+                const n = MIN(usize, ob.out_buf.len - p.out_buf_ofs, p.flush_remaining);
+                if (n > 0) {
+                    for (p.local_buf.b[p.flush_ofs..p.flush_ofs + n]) |*b, ii|{
+                        ob.out_buf[p.out_buf_ofs + ii] = b.*;
+                    }
+                }
+                const nn = @truncate(u32, n);
+                p.flush_ofs += nn;
+                p.flush_remaining -= nn;
+                p.out_buf_ofs += nn;
+                res.outpos = p.out_buf_ofs;
+            },
+            else => {},
+        }
+
+        if (p.finished and (p.flush_remaining == 0)) {
+            res.status = TDEFLStatus.Done;
+        }
+
+        return res;
     }
 };
 
@@ -1751,731 +2430,6 @@ fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !
     return true;
 }
 
-fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
-    if (debug) warn("flush_block\n");
-    var saved_buffer: SavedOutputBuffer = undefined;
-    {
-        var output = callback.out.new_output_buffer(
-            &d.params.local_buf.b,
-            d.params.out_buf_ofs,
-        );
-        output.bit_buffer = d.params.saved_bit_buffer;
-        output.bits_in = d.params.saved_bits_in;
-
-        const use_raw_block = ((d.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) and
-            ((d.dict.lookahead_pos - d.dict.code_buf_dict_pos) <= d.dict.size);
-
-        assert(d.params.flush_remaining == 0);
-        d.params.flush_ofs = 0;
-        d.params.flush_remaining = 0;
-
-        d.lz.init_flag();
-
-        // If we are at the start of the stream, write the zlib header if requested.
-        if (((d.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) and (d.params.block_index == 0)) {
-            output.put_bits(0x78, 8);
-            output.put_bits(0x01, 8);
-        }
-
-        // Output the block header.
-        output.put_bits(@boolToInt(flush == TDEFLFlush.Finish), 1);
-
-        saved_buffer = output.save();
-
-        var comp_success = false;
-        if (!use_raw_block) {
-            const use_static = ((d.params.flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) != 0) or
-                (d.lz.total_bytes < 48);
-            comp_success = try d.huff.compress_block(&output, &d.lz, use_static);
-        }
-
-        // If we failed to compress anything and the output would take
-        // up more space than the output data, output a stored block
-        // instead, which has at most 5 bytes of overhead.  We only
-        // use some simple heuristics for now.  A stored block will
-        // have an overhead of at least 4 bytes containing the block
-        // length but usually more due to the length parameters having
-        // to start at a byte boundary and thus requiring up to 5
-        // bytes of padding.  As a static block will have an overhead
-        // of at most 1 bit per byte (as literals are either 8 or 9
-        // bytes), a raw block will never take up less space if the
-        // number of input bytes are less than 32.
-        const expanded = (d.lz.total_bytes > 32)
-            and ((output.inner.position() - saved_buffer.pos + 1) >= d.lz.total_bytes)
-            and ((d.dict.lookahead_pos - d.dict.code_buf_dict_pos) <= d.dict.size);
-
-        if (use_raw_block or expanded) {
-            output.load(saved_buffer);
-
-            // Block header.
-            output.put_bits(0, 2);
-
-            // Block length has to start on a byte boundary, so pad.
-            output.pad_to_bytes();
-
-            // Block length and ones complement of block length.
-            output.put_bits(d.lz.total_bytes & 0xFFFF, 16);
-            output.put_bits(~d.lz.total_bytes & 0xFFFF, 16);
-
-            // Write the actual bytes.
-            var i: usize = 0;
-            //for i in 0..d.lz.total_bytes {
-            while (i < d.lz.total_bytes) : (i += 1) {
-                const pos = (d.dict.code_buf_dict_pos + i) & LZ_DICT_SIZE_MASK;
-                output.put_bits(d.dict.b.dict[pos], 8);
-            }
-        } else if (!comp_success) {
-            output.load(saved_buffer);
-            _ = d.huff.compress_block(&output, &d.lz, true);
-        }
-
-        if (flush != TDEFLFlush.None) {
-            if (flush == TDEFLFlush.Finish) {
-                output.pad_to_bytes();
-                if ((d.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) {
-                    var adler = d.params.adler32;
-                    var i: usize = 0;
-                    //for _ in 0..4 {
-                    while (i < 4) : (i += 1) {
-                        output.put_bits((adler >> 24) & 0xFF, 8);
-                        adler <<= 8;
-                    }
-                }
-            } else {
-                output.put_bits(0, 3);
-                output.pad_to_bytes();
-                output.put_bits(0, 16);
-                output.put_bits(0xFFFF, 16);
-            }
-        }
-
-        setmem(u16, d.huff.litlen.count[0..MAX_HUFF_SYMBOLS_0], 0);
-        setmem(u16, d.huff.dist.count[0..MAX_HUFF_SYMBOLS_1], 0);
-
-        d.lz.code_position = 1;
-        d.lz.flag_position = 0;
-        d.lz.num_flags_left = 8;
-        d.dict.code_buf_dict_pos += d.lz.total_bytes;
-        d.lz.total_bytes = 0;
-        d.params.block_index += 1;
-
-        saved_buffer = output.save();
-
-        d.params.saved_bit_buffer = saved_buffer.bit_buffer;
-        d.params.saved_bits_in = saved_buffer.bits_in;
-    }
-
-    return callback.flush_output(saved_buffer, &d.params);
-}
-
-fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
-    if (debug) warn("record_literal(*, {c}/{x})\n", lit, lit);
-    //lz.dump();
-    lz.total_bytes += 1;
-    lz.write_code(lit);
-
-    (lz.get_flag()).* >>= 1;
-    lz.consume_flag();
-
-    h.litlen.count[lit] += 1;
-}
-
-fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
-    if (debug) warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
-    var match_len = pmatch_len;
-    var match_dist = pmatch_dist;
-    assert(match_len >= MIN_MATCH_LEN);
-    assert(match_dist >= 1);
-    assert(match_dist <= LZ_DICT_SIZE);
-
-    lz.total_bytes += match_len;
-    match_dist -= 1;
-    match_len -= MIN_MATCH_LEN;
-    assert(match_len < 256);
-    lz.write_code(@truncate(u8, match_len));
-    lz.write_code(@truncate(u8, match_dist));
-    lz.write_code(@truncate(u8, match_dist >> 8));
-
-    (lz.get_flag()).* >>= 1;
-    (lz.get_flag()).* |= 0x80;
-    lz.consume_flag();
-
-    var symbol = if (match_dist < 512) SMALL_DIST_SYM[match_dist] else LARGE_DIST_SYM[((match_dist >> 8) & 127)];
-    h.dist.count[symbol] += 1;
-    h.litlen.count[LEN_SYM[match_len]] += 1;
-}
-
-fn LZ_DICT_POS(pos: u32) u32 {
-    return pos &  u32(LZ_DICT_SIZE_MASK);
-}
-
-fn compress_normal(d: *Compressor, callback: *Callback) bool {
-    if (debug) warn("compress_normal\n");
-    var src_pos = d.params.src_pos;
-    var in_buf = if (callback.in_buf) |in_buf| in_buf else return true;
-
-    var lookahead_size = d.dict.lookahead_size;
-    var lookahead_pos = d.dict.lookahead_pos;
-    var saved_lit = d.params.saved_lit;
-    var saved_match_dist = d.params.saved_match_dist;
-    var saved_match_len = d.params.saved_match_len;
-
-    while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None) and (lookahead_size != 0))) {
-        const src_buf_left = in_buf.len - src_pos;
-        const num_bytes_to_process =
-            MIN(u32, @truncate(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
-
-        if ((lookahead_size + d.dict.size) >= (MIN_MATCH_LEN - 1) and (num_bytes_to_process > 0)) {
-            var dictb = &d.dict.b;
-
-            var dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
-            var ins_pos =  LZ_DICT_POS(lookahead_pos + lookahead_size - 2);
-            var hash = (u32(dictb.dict[LZ_DICT_POS(ins_pos)]) << LZ_HASH_SHIFT)
-                ^ (dictb.dict[LZ_DICT_POS(ins_pos + 1)]);
-
-            lookahead_size += num_bytes_to_process;
-            for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
-                dictb.dict[dst_pos] = c;
-                if (dst_pos < (MAX_MATCH_LEN - 1)) {
-                    dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
-                }
-
-                hash = ((u32(hash) << LZ_HASH_SHIFT) ^ u32(c)) & u32(LZ_HASH_SIZE - 1);
-                dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
-
-                dictb.hash[hash] = @truncate(u16, ins_pos & 0xffff);
-                dst_pos = LZ_DICT_POS(dst_pos + 1);
-                ins_pos += 1;
-            }
-            src_pos += num_bytes_to_process;
-        } else {
-            var dictb = &d.dict.b;
-            for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
-                const dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
-                dictb.dict[dst_pos] = c;
-                //warn("c={c}, dst_pos={}\n", c, dst_pos);
-                if (dst_pos < (MAX_MATCH_LEN - 1)) {
-                     dictb.dict[LZ_DICT_SIZE + dst_pos] = c;
-                    //warn("c={c}, dst_pos={}\n", c, dst_pos + LZ_DICT_SIZE);
-                }
-
-                lookahead_size += 1;
-                if ((lookahead_size + d.dict.size) >= MIN_MATCH_LEN) {
-                    const ins_pos = lookahead_pos + lookahead_size - 3;
-                    //warn("ins_pos={}\n", ins_pos);
-                    const hash =
-                        ((u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
-                          (LZ_HASH_SHIFT * 2)) ^
-                         ((u32(dictb.dict[LZ_DICT_POS(ins_pos + 1)]) << LZ_HASH_SHIFT) ^
-                          u32(c))) & u32(LZ_HASH_SIZE - 1);
-
-                    dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
-                    dictb.hash[hash] = @truncate(u16, ins_pos);
-                }
-            }
-
-            src_pos += num_bytes_to_process;
-        }
-
-        d.dict.size = MIN(u32, LZ_DICT_SIZE - lookahead_size, d.dict.size);
-        if ((d.params.flush == TDEFLFlush.None) and ((lookahead_size) < MAX_MATCH_LEN)) {
-            break;
-        }
-
-        var len_to_move: u32 = 1;
-        var cur_match_dist: u32 = 0;
-        var cur_match_len = if (saved_match_len != 0) saved_match_len else (MIN_MATCH_LEN - 1);
-        const cur_pos = (lookahead_pos & LZ_DICT_SIZE_MASK);
-        if (d.params.flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) {
-            if ((d.dict.size != 0) and ((d.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) == 0)) {
-                const c = d.dict.b.dict[((cur_pos -% 1) & LZ_DICT_SIZE_MASK)];
-                var i: usize = cur_pos;
-                var count: u32 = 0;
-                while (i < (cur_pos + lookahead_size - 1)) : (i += 1) {
-                    if (d.dict.b.dict[i] != c) {
-                        break;
-                    }
-                    count += 1;
-                }
-                warn("count={}\n", count);
-                cur_match_len = count;
-                if (cur_match_len < MIN_MATCH_LEN) {
-                    cur_match_len = 0;
-                } else {
-                    cur_match_dist = 1;
-                }
-            }
-        } else {
-            const dist_len = d.dict.find_match(
-                lookahead_pos,
-                d.dict.size,
-                lookahead_size,
-                cur_match_dist,
-                cur_match_len,
-            );
-            //dist_len.dump();
-            cur_match_dist = dist_len.distance;
-            cur_match_len = dist_len.length;
-        }
-
-        const far_and_small = (cur_match_len == MIN_MATCH_LEN)
-            and (cur_match_dist >= (8 * 1024));
-        const filter_small = (((d.params.flags & TDEFL_FILTER_MATCHES) != 0)
-                              and (cur_match_len <= 5));
-        if (far_and_small or filter_small or (cur_pos == cur_match_dist)) {
-            cur_match_dist = 0;
-            cur_match_len = 0;
-        }
-
-        //warn("cur_match_len={}, saved_match_len={}, saved_match_dist={}\n",
-        //     cur_match_len, saved_match_len, saved_match_dist);
-        if (saved_match_len != 0) {
-            if (cur_match_len > saved_match_len) {
-                record_literal(&d.huff, &d.lz, saved_lit);
-                if (cur_match_len >= 128) {
-                    record_match(&d.huff, &d.lz, cur_match_len, cur_match_dist);
-                    saved_match_len = 0;
-                    len_to_move = cur_match_len;
-                } else {
-                    saved_lit = d.dict.b.dict[cur_pos];
-                    saved_match_dist = cur_match_dist;
-                    saved_match_len = cur_match_len;
-                }
-            } else {
-                record_match(&d.huff, &d.lz, saved_match_len, saved_match_dist);
-                len_to_move = saved_match_len - 1;
-                saved_match_len = 0;
-            }
-        } else if (cur_match_dist == 0) {
-            record_literal(
-                &d.huff,
-                &d.lz,
-                d.dict.b.dict[MIN(usize, cur_pos, d.dict.b.dict.len - 1)],
-            );
-        } else if ((d.params.greedy_parsing) or (d.params.flags & TDEFL_RLE_MATCHES != 0) or
-                   (cur_match_len >= 128))
-        {
-            // If we are using lazy matching, check for matches at the next byte if the current
-            // match was shorter than 128 bytes.
-            record_match(&d.huff, &d.lz, cur_match_len, cur_match_dist);
-            len_to_move = cur_match_len;
-        } else {
-            saved_lit = d.dict.b.dict[MIN(usize, cur_pos, d.dict.b.dict.len - 1)];
-            saved_match_dist = cur_match_dist;
-            saved_match_len = cur_match_len;
-        }
-
-        lookahead_pos += len_to_move;
-        assert(lookahead_size >= len_to_move);
-        lookahead_size -= len_to_move;
-        d.dict.size = MIN(u32, d.dict.size + len_to_move, LZ_DICT_SIZE);
-
-        const lz_buf_tight = d.lz.code_position > LZ_CODE_BUF_SIZE - 8;
-        const raw = d.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS != 0;
-        const fat = ((d.lz.code_position * 115) >> 7) >= d.lz.total_bytes;
-        const fat_or_raw = (d.lz.total_bytes > 31 * 1024) and (fat or raw);
-
-        if (lz_buf_tight or fat_or_raw) {
-            d.params.src_pos = src_pos;
-            // These values are used in flush_block, so we need to write them back here.
-            d.dict.lookahead_size = lookahead_size;
-            d.dict.lookahead_pos = lookahead_pos;
-
-            const n = flush_block(d, callback, TDEFLFlush.None) catch 0;
-            //.unwrap_or(
-            //    TDEFLStatus.PutBufFailed as
-            //        i32,
-            if (n != 0) {
-                d.params.saved_lit = saved_lit;
-                d.params.saved_match_dist = saved_match_dist;
-                d.params.saved_match_len = saved_match_len;
-                return (n > 0);
-            }
-        }
-    }
-
-    d.params.src_pos = src_pos;
-    d.dict.lookahead_size = lookahead_size;
-    d.dict.lookahead_pos = lookahead_pos;
-    d.params.saved_lit = saved_lit;
-    d.params.saved_match_dist = saved_match_dist;
-    d.params.saved_match_len = saved_match_len;
-
-    //d.dict.dump();
-
-    return true;
-}
-
-
-const COMP_FAST_LOOKAHEAD_SIZE: u32 = 4096;
-
-fn compress_fast(d: *Compressor, callback: *Callback)  bool {
-    if (debug) warn("compress_fast\n");
-    var src_pos = d.params.src_pos;
-    var lookahead_size = d.dict.lookahead_size;
-    var lookahead_pos = d.dict.lookahead_pos;
-
-    var cur_pos = lookahead_pos & LZ_DICT_SIZE_MASK;
-    const in_buf = if (callback.in_buf) |buf|  buf else return true;
-
-    assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
-
-    while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None)
-                                      and (lookahead_size > 0))) {
-        var dst_pos: usize = ((lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK);
-        var num_bytes_to_process = MIN(usize, in_buf.len - src_pos,
-                                       (COMP_FAST_LOOKAHEAD_SIZE - lookahead_size));
-        lookahead_size += @truncate(@typeOf(lookahead_size), num_bytes_to_process);
-
-        while (num_bytes_to_process != 0) {
-            const n = MIN(usize, LZ_DICT_SIZE - dst_pos, num_bytes_to_process);
-            //d.dict.b.dict[dst_pos..dst_pos + n].copy_from_slice(&in_buf[src_pos..src_pos + n]);
-            for (in_buf[src_pos..src_pos + n]) |*b, ii| {
-                d.dict.b.dict[dst_pos + ii] = b.*;
-            }
-
-            if (dst_pos < (MAX_MATCH_LEN - 1)) {
-                const m = MIN(usize, n, MAX_MATCH_LEN - 1 - dst_pos);
-                // d.dict.b.dict[dst_pos + LZ_DICT_SIZE..dst_pos + LZ_DICT_SIZE + m]
-                //     .copy_from_slice(&in_buf[src_pos..src_pos + m]);
-                for (in_buf[src_pos..src_pos + m]) |*b, ii| {
-                    d.dict.b.dict[dst_pos + LZ_DICT_SIZE + ii] = b.*;
-                }
-            }
-
-            src_pos += n;
-            dst_pos = (dst_pos + n) & LZ_DICT_SIZE_MASK;
-            num_bytes_to_process -= n;
-        }
-
-        d.dict.size = MIN(u32, LZ_DICT_SIZE - lookahead_size, d.dict.size);
-        if ((d.params.flush == TDEFLFlush.None) and (lookahead_size < COMP_FAST_LOOKAHEAD_SIZE)) {
-            break;
-        }
-
-        while (lookahead_size >= 4) {
-            var cur_match_len: u32 = 1;
-            // # Unsafe
-            // cur_pos is always masked when assigned to.
-            //         let first_trigram = unsafe {
-            //             u32::from_le(d.dict.read_unaligned::<u32>(cur_pos as isize)) & 0xFF_FFFF
-            //         };
-            var first_trigram: u32 = d.dict.read_unaligned(u32, cur_pos) & 0xFFFFFF;
-
-            const hash = (first_trigram ^ (first_trigram >> (24 - (LZ_HASH_BITS - 8)))) &
-                LEVEL1_HASH_SIZE_MASK;
-
-            var probe_pos: u32 = d.dict.b.hash[hash];
-            d.dict.b.hash[hash] = @truncate(u16, lookahead_pos);
-
-            var cur_match_dist = @truncate(u16, lookahead_pos - probe_pos);
-            if (cur_match_dist <= d.dict.size) {
-                probe_pos &= LZ_DICT_SIZE_MASK;
-                // # Unsafe
-                // probe_pos was just masked so it can't exceed the dictionary size + max_match_len.
-                // let trigram = unsafe {
-                //     u32::from_le(d.dict.read_unaligned::<u32>(probe_pos as isize)) & 0xFF_FFFF
-                // };
-                var trigram = d.dict.read_unaligned(u32, probe_pos) & 0xFFFFFF;
-
-                if (first_trigram == trigram) {
-                    // Trigram was tested, so we can start with "+ 3" displacement.
-                    var p = (cur_pos + 3);
-                    var q = (probe_pos + 3);
-                    cur_match_len = find_match: {
-                        var i: usize = 0;
-                        while (i < 32) : (i += 1) {
-                            // # Unsafe
-                            // This loop has a fixed counter, so p_data and q_data will never be
-                            // increased beyond 251 bytes past the initial values.
-                            // Both pos and probe_pos are bounded by masking with
-                            // LZ_DICT_SIZE_MASK,
-                            // so {pos|probe_pos} + 258 will never exceed dict.len().
-                            // (As long as dict is padded by one additional byte to have
-                            // 259 bytes of lookahead since we start at cur_pos + 3.)
-                            const p_data: u64 = d.dict.read_unaligned(u64, p);
-                            //              unsafe {u64::from_le(d.dict.read_unaligned(p as isize))};
-                            const q_data: u64 = d.dict.read_unaligned(u64, q);
-                            //              unsafe {u64::from_le(d.dict.read_unaligned(q as isize))};
-                            const xor_data = p_data ^ q_data;
-                            if (xor_data == 0) {
-                                p += 8;
-                                q += 8;
-                            } else {
-                                const trailing = @ctz(xor_data);
-                                break :find_match @truncate(u32, p) - cur_pos + (trailing >> 3);
-                            }
-                        }
-
-                        if (cur_match_dist == 0) {
-                            break :find_match u32(0);
-                        } else {
-                            break :find_match u32(MAX_MATCH_LEN);
-                        }
-                    };
-
-                    if ((cur_match_len < MIN_MATCH_LEN) or ((cur_match_len == MIN_MATCH_LEN) and (cur_match_dist >= 8 * 1024)))
-                    {
-                        const lit = @truncate(u8, first_trigram);
-                        cur_match_len = 1;
-                        d.lz.write_code(lit);
-                        (d.lz.get_flag()).* >>= 1;
-                        d.huff.litlen.count[lit] += 1;
-                    } else {
-                        // Limit the match to the length of the lookahead so we don't create a match
-                        // that ends after the end of the input data.
-                        cur_match_len = MIN(@typeOf(cur_match_len), cur_match_len, lookahead_size);
-                        assert(cur_match_len >= MIN_MATCH_LEN);
-                        assert(cur_match_dist >= 1);
-                        assert(cur_match_dist <= LZ_DICT_SIZE);
-                        cur_match_dist -= 1;
-
-                        d.lz.write_code(@truncate(u8, cur_match_len - MIN_MATCH_LEN));
-                        // # Unsafe
-                        // code_position is checked to be smaller than the lz buffer size
-                        // at the start of this function and on every loop iteration.
-                        //  unsafe {
-                        write_u16_le_uc(@truncate(u16, cur_match_dist),
-                                        d.lz.codes[0..],
-                                        d.lz.code_position);
-                        d.lz.code_position += 2;
-                        //  }
-
-                        (d.lz.get_flag()).* >>= 1;
-                        (d.lz.get_flag()).* |= 0x80;
-                        if (cur_match_dist < 512) {
-                            d.huff.dist.count[SMALL_DIST_SYM[cur_match_dist]] += 1;
-                        } else {
-                            d.huff.dist.count[LARGE_DIST_SYM[(cur_match_dist >> 8)]] += 1;
-                        }
-
-                        d.huff.litlen.count[LEN_SYM[(cur_match_len - MIN_MATCH_LEN)]] += 1;
-                    }
-                } else {
-                    d.lz.write_code(@truncate(u8, first_trigram));
-                    (d.lz.get_flag()).* >>= 1;
-                    d.huff.litlen.count[@truncate(u8, first_trigram)] += 1;
-                }
-
-                d.lz.consume_flag();
-                d.lz.total_bytes += cur_match_len;
-                lookahead_pos += cur_match_len;
-                d.dict.size = MIN(@typeOf(d.dict.size), d.dict.size + cur_match_len, LZ_DICT_SIZE);
-                cur_pos = (cur_pos + cur_match_len) & LZ_DICT_SIZE_MASK;
-                assert(lookahead_size >= cur_match_len);
-                lookahead_size -= cur_match_len;
-
-                if (d.lz.code_position > (LZ_CODE_BUF_SIZE - 8)) {
-                    // These values are used in flush_block, so we need to write them back here.
-                    d.dict.lookahead_size = lookahead_size;
-                    d.dict.lookahead_pos = lookahead_pos;
-                    var n: u32 = 0;
-                    if (flush_block(d, callback, TDEFLFlush.None)) |nn| {
-                        n = nn;
-                        if (n != 0) {
-                            d.params.src_pos = src_pos;
-                            return n > 0;
-                        }
-                        assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
-
-                        lookahead_size = d.dict.lookahead_size;
-                        lookahead_pos = d.dict.lookahead_pos;
-                    } else |err| {
-                        d.params.src_pos = src_pos;
-                        d.params.prev_return_status = TDEFLStatus.PutBufFailed;
-                        return false;
-                    }
-                    //  let n = match flush_block(d, callback, TDEFLFlush::None) {
-                    //      Err(_) => {
-                    //          d.params.src_pos = src_pos;
-                    //          d.params.prev_return_status = TDEFLStatus::PutBufFailed;
-                    //          return false;
-                    //      }
-                    //      Ok(status) => status,
-                    //  };
-                }
-            }
-        }
-
-        while (lookahead_size != 0) {
-            const lit = d.dict.b.dict[cur_pos];
-            d.lz.total_bytes += 1;
-            d.lz.write_code(lit);
-            (d.lz.get_flag()).* >>= 1;
-            d.lz.consume_flag();
-
-            d.huff.litlen.count[lit] += 1;
-            lookahead_pos += 1;
-            d.dict.size = MIN(@typeOf(d.dict.size), d.dict.size + 1, LZ_DICT_SIZE);
-            cur_pos = (cur_pos + 1) & LZ_DICT_SIZE_MASK;
-            lookahead_size -= 1;
-
-            if (d.lz.code_position > (LZ_CODE_BUF_SIZE - 8)) {
-                // These values are used in flush_block, so we need to write them back here.
-                d.dict.lookahead_size = lookahead_size;
-                d.dict.lookahead_pos = lookahead_pos;
-
-                var n: u32 = 0;
-                if (flush_block(d, callback, TDEFLFlush.None)) |nn| {
-                    n = nn;
-                    if (n != 0) {
-                        d.params.src_pos = src_pos;
-                        return n > 0;
-                    }
-
-                    lookahead_size = d.dict.lookahead_size;
-                    lookahead_pos = d.dict.lookahead_pos;
-                } else |err| {
-                    d.params.prev_return_status = TDEFLStatus.PutBufFailed;
-                    d.params.src_pos = src_pos;
-                    return false;
-                }
-            }
-        }
-    }
-
-    d.params.src_pos = src_pos;
-    d.dict.lookahead_size = lookahead_size;
-    d.dict.lookahead_pos = lookahead_pos;
-    return true;
-}
-
-fn flush_output_buffer(cb: *Callback, p: *Params) CompressionResult {
-    if (debug) warn("flush_output_buffer remaining={}\n", p.flush_remaining);
-    var res = CompressionResult.new(TDEFLStatus.Okay, p.src_pos, 0);
-    switch (cb.out) {
-        CallbackOut.Buf => |ob| {
-            const n = MIN(usize, ob.out_buf.len - p.out_buf_ofs, p.flush_remaining);
-            if (n > 0) {
-                for (p.local_buf.b[p.flush_ofs..p.flush_ofs + n]) |*b, ii|{
-                    ob.out_buf[p.out_buf_ofs + ii] = b.*;
-                }
-            }
-            const nn = @truncate(u32, n);
-            p.flush_ofs += nn;
-            p.flush_remaining -= nn;
-            p.out_buf_ofs += nn;
-            res.outpos = p.out_buf_ofs;
-        },
-        else => {},
-    }
-
-    if (p.finished and (p.flush_remaining == 0)) {
-        res.status = TDEFLStatus.Done;
-    }
-
-    return res;
-}
-
-fn compress_inner(d: *Compressor, callback: *Callback,
-                  pflush: TDEFLFlush) CompressionResult {
-    if (debug) warn("compress_inner\n");
-    var res: CompressionResult = undefined;
-    var flush = pflush;
-    d.params.out_buf_ofs = 0;
-    d.params.src_pos = 0;
-
-    var prev_ok = d.params.prev_return_status == TDEFLStatus.Okay;
-    var flush_finish_once = (d.params.flush != TDEFLFlush.Finish) or (flush == TDEFLFlush.Finish);
-
-    d.params.flush = flush;
-    if (!prev_ok or !flush_finish_once) {
-        d.params.prev_return_status = TDEFLStatus.BadParam;
-        res = CompressionResult.new(d.params.prev_return_status, 0, 0);
-        return res;
-    }
-
-    if ((d.params.flush_remaining != 0) or d.params.finished) {
-        res = flush_output_buffer(callback, &d.params);
-        d.params.prev_return_status = res.status;
-        return res;
-    }
-
-    const one_probe = (d.params.flags & MAX_PROBES_MASK) == 1;
-    const greedy = (d.params.flags & TDEFL_GREEDY_PARSING_FLAG) != 0;
-    const filter_or_rle_or_raw = (d.params.flags & (TDEFL_FILTER_MATCHES
-                                                    | TDEFL_FORCE_ALL_RAW_BLOCKS
-                                                    | TDEFL_RLE_MATCHES)) != 0;
-
-    const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
-        compress_fast(d, callback) else compress_normal(d, callback);
-
-    if (!compress_success) {
-        return CompressionResult.new(d.params.prev_return_status, d.params.src_pos, d.params.out_buf_ofs);
-    }
-
-    if (callback.in_buf) |in_buf| {
-        if ((d.params.flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) != 0) {
-            d.params.adler32 = adler32(d.params.adler32, in_buf[0..d.params.src_pos]);
-        }
-    }
-
-    //callback.dump();
-
-    const flush_none = (d.params.flush == TDEFLFlush.None);
-    //const in_left = callback.in_buf.len - d.params.src_pos; //callback.in_buf.map_or(0, |buf| buf.len()) - d.params.src_pos;
-    const in_left = if (callback.in_buf) |buf| (buf.len - d.params.src_pos) else 0;
-    const remaining = (in_left != 0) or (d.params.flush_remaining != 0);
-    if (!flush_none and (d.dict.lookahead_size == 0) and !remaining) {
-        flush = d.params.flush;
-        if (flush_block(d, callback, flush)) |n| {
-            // given that we get a u32, this will never happen...investigate
-            if (n < 0) {
-                res.status = d.params.prev_return_status;
-                res.inpos = d.params.src_pos;
-                res.outpos = d.params.out_buf_ofs;
-                return res;
-            }
-            d.params.finished = d.params.flush == TDEFLFlush.Finish;
-            if (d.params.flush == TDEFLFlush.Full) {
-                if (debug) warn("full flush\n");
-                setmem(@typeOf(d.dict.b.hash[0]), d.dict.b.hash[0..], 0);
-                setmem(@typeOf(d.dict.b.next[0]), d.dict.b.next[0..], 0);
-                d.dict.size = 0;
-            }
-
-        } else |err| {
-            d.params.prev_return_status = TDEFLStatus.PutBufFailed;
-            res.status = d.params.prev_return_status;
-            res.inpos = d.params.src_pos;
-            res.outpos = d.params.out_buf_ofs;
-            return res;
-        }
-        // match  {
-        //     Err(_) => {
-        //         d.params.prev_return_status = TDEFLStatus::PutBufFailed;
-        //         return (
-        //             d.params.prev_return_status,
-        //             d.params.src_pos,
-        //             d.params.out_buf_ofs,
-        //         );
-        //     }
-        //     Ok(x) if x < 0 => {
-        //         return (
-        //             d.params.prev_return_status,
-        //             d.params.src_pos,
-        //             d.params.out_buf_ofs,
-        //         )
-        //     }
-        //     _ => {
-    }
-
-    res = flush_output_buffer(callback, &d.params);
-    d.params.prev_return_status = res.status;
-
-    return res;
-}
-
-/// Main compression function. Puts output into buffer.
-///
-/// # Returns
-/// Returns a tuple containing the current status of the compressor, the current position
-/// in the input buffer and the current position in the output buffer.
-pub fn compress(d: *Compressor, in_buf: []u8, out_buf: []u8,
-                flush: TDEFLFlush) CompressionResult {
-    var callback = Callback.new_callback_buf(in_buf, out_buf);
-    return compress_inner(d, &callback, flush);
-}
 
 /// Create a set of compression flags using parameters used by zlib and other compressors.
 pub fn create_comp_flags_from_zip_params(level: u32, window_bits: u32, strategy: i32) u32 {
@@ -2506,7 +2460,6 @@ test "compression flags" {
     var flags = create_comp_flags_from_zip_params(9, 15, 0);
     warn("flags={x08}\n", flags);
 }
-
 
 test "Write U16" {
     var slice = [2]u8 {0, 0};
@@ -2541,11 +2494,51 @@ test "Cursor"  {
     cursor.dump();
 }
 
-test "Compressor" {
+test "Compressor.static" {
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(6, 15, 0));
-    //var input = "Deflate lateDeflate lateDeflate lateDeflate lateDeflate lateDeflate late\n";
-    var input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    var input = "Deflate late\n";
+    warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
+    var output = []u8 {0} ** 256;
+    var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    /// for pasting into  Python zlib.decompress(<paste>), could puff it...
+    warn("\"");
+    for (output[0..r.outpos]) |b, i| {
+        warn("\\x{x02}", b);
+    }
+    warn("\"\n");
+    if (false) {
+        // when we know what we are doing, decompresses in Python but not with puff (a bug?)
+        const puff = @import("puff.zig").puff;
+        var out = []u8 {0} ** 32;
+        var outlen: usize = out.len;
+        var inlen: usize = r.outpos;
+        const p = try puff(out[0..], &outlen, output[0..], &inlen);
+    }
+
+}
+
+test "Compressor.fast" {
+    var c: Compressor = undefined;
+    c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
+    var input = "Deflate late\n";
+    warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
+    var output = []u8 {0} ** 256;
+    var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    /// for pasting into  Python zlib.decompress(<paste>), could puff it...
+    warn("\"");
+    for (output[0..r.outpos]) |b, i| {
+        warn("\\x{x02}", b);
+    }
+    warn("\"\n");
+}
+
+test "Compressor.dynamic" {
+    var c: Compressor = undefined;
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    var input = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
@@ -2561,9 +2554,9 @@ test "Compressor" {
 test "Compress File" {
     const os = std.os;
     const io = std.io;
-    var raw_bytes: [4 * 1024]u8 = undefined;
+    var raw_bytes: [16 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
-    const tmp_file_name = "lorem.txt";
+    const tmp_file_name = "adler32.zig";
     var file = try os.File.openRead(allocator, tmp_file_name);
     defer file.close();
 
@@ -2573,20 +2566,25 @@ test "Compress File" {
     var file_in_stream = io.FileInStream.init(&file);
     var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
     const st = &buf_stream.stream;
-    const contents = try st.readAllAlloc(allocator, 2 * 1024);
+    const contents = try st.readAllAlloc(allocator, file_size + 4);
     warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
     defer allocator.free(contents);
 
-    var input = @embedFile("lorem.txt");
+    var input = @embedFile(tmp_file_name);
     warn("{x08} vs {x08}\n", adler32(MZ_ADLER32_INIT, input), adler32(MZ_ADLER32_INIT, contents));
     assert(mem.eql(u8, input, contents));
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(6, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
 
-    var output = []u8 {0} ** (2 * 1024);
-    var r = compress(&c, input[0..], output[0..], TDEFLFlush.Finish);
+    var output = []u8 {0} ** (6 * 1024);
+    var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
     r.dump();
-    for (output[0..r.outpos]) |b, i| {
-        warn("\\x{x02}", b);
+    if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
+        warn("8) Guesstimated compression: {.02}%\n",
+             (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
+        for (output[0..r.outpos]) |b, i| {
+            warn("\\x{x02}", b);
+        }
+        warn("\n");
     }
 }

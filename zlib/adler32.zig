@@ -153,11 +153,10 @@ inline fn adler32_z(padler: uLong, buf: []const Bytef) uLong {
         sum2 %= BASE;
     }
 
-    //* return recombined sums */
+    // return recombined sums
     return (adler | (sum2 << 16));
 }
 
-//* ========================================================================= */
 /// Update an adler32 checksum.
 ///
 pub fn adler32(adler: uLong, buf: []const Bytef) uLong {
