@@ -2508,15 +2508,18 @@ test "Compressor.static" {
         warn("\\x{x02}", b);
     }
     warn("\"\n");
-    if (false) {
-        // when we know what we are doing, decompresses in Python but not with puff (a bug?)
+    if (true) {
         const puff = @import("puff.zig").puff;
         var out = []u8 {0} ** 32;
         var outlen: usize = out.len;
         var inlen: usize = r.outpos;
-        const p = try puff(out[0..], &outlen, output[0..], &inlen);
+        // puff does not read the zlib header so we skip the first 2-two bytes
+        // which seems to work.
+        const p = try puff(out[0..], &outlen, output[2..], &inlen);
+        warn("p={}, outlen={}\n", p, outlen);
+        assert(input.len == outlen);
+        assert(mem.eql(u8, out[0..outlen], input));
     }
-
 }
 
 test "Compressor.fast" {
@@ -2533,13 +2536,25 @@ test "Compressor.fast" {
         warn("\\x{x02}", b);
     }
     warn("\"\n");
+    if (true) {
+        const puff = @import("puff.zig").puff;
+        var out = []u8 {0} ** 32;
+        var outlen: usize = out.len;
+        var inlen: usize = r.outpos;
+        // puff does not read the zlib header so we skip the first 2-two bytes
+        // which seems to work.
+        const p = try puff(out[0..], &outlen, output[2..], &inlen);
+        warn("p={}, outlen={}\n", p, outlen);
+        assert(input.len == outlen);
+        assert(mem.eql(u8, out[0..outlen], input));
+    }
 }
 
 test "Compressor.dynamic" {
     var c: Compressor = undefined;
     c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
     var input = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
-    warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
+    if (debug) warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
     r.dump();
@@ -2549,9 +2564,101 @@ test "Compressor.dynamic" {
         warn("\\x{x02}", b);
     }
     warn("\"\n");
+    if (false) {
+        // when we know what we are doing, decompresses in Python but not with puff (a bug?)
+        const puff = @import("puff.zig").puff;
+        var out = []u8 {0} ** 32;
+        var outlen: usize = out.len;
+        var inlen: usize = r.outpos;
+        // puff does not read the zlib header so we skip the first 2-two bytes
+        // which seems to work.
+        const p = try puff(out[0..], &outlen, output[2..], &inlen);
+        warn("p={}, outlen={}\n", p, outlen);
+        assert(input.len == outlen);
+        assert(mem.eql(u8, out[0..outlen], input));
+    }
 }
 
-test "Compress File" {
+test "Compress File Fast" {
+    const os = std.os;
+    const io = std.io;
+    var raw_bytes: [16 * 1024]u8 = undefined;
+    var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
+    const tmp_file_name = "adler32.zig";
+    var file = try os.File.openRead(allocator, tmp_file_name);
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+
+    warn("File has {} bytes\n", file_size);
+    var file_in_stream = io.FileInStream.init(&file);
+    var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
+    const st = &buf_stream.stream;
+    const contents = try st.readAllAlloc(allocator, file_size + 4);
+    warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
+    defer allocator.free(contents);
+
+    var input = @embedFile(tmp_file_name);
+    warn("{x08} vs {x08}\n", adler32(MZ_ADLER32_INIT, input), adler32(MZ_ADLER32_INIT, contents));
+    assert(mem.eql(u8, input, contents));
+    var c: Compressor = undefined;
+    c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
+
+    var output = []u8 {0} ** (6 * 1024);
+    var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
+        warn("8) Guesstimated compression: {.02}%\n",
+             (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
+        for (output[0..r.outpos]) |b, i| {
+            warn("\\x{x02}", b);
+        }
+        warn("\n");
+    }
+}
+
+test "Compress File Dynamic" {
+    const os = std.os;
+    const io = std.io;
+    var raw_bytes: [16 * 1024]u8 = undefined;
+    var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
+    const tmp_file_name = "adler32.zig";
+    var file = try os.File.openRead(allocator, tmp_file_name);
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+
+    warn("File has {} bytes\n", file_size);
+    var file_in_stream = io.FileInStream.init(&file);
+    var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
+    const st = &buf_stream.stream;
+    const contents = try st.readAllAlloc(allocator, file_size + 4);
+    warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
+    defer allocator.free(contents);
+
+    var input = @embedFile(tmp_file_name);
+    warn("{x08} vs {x08}\n", adler32(MZ_ADLER32_INIT, input), adler32(MZ_ADLER32_INIT, contents));
+    assert(mem.eql(u8, input, contents));
+    var c: Compressor = undefined;
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+
+    var output = []u8 {0} ** (6 * 1024);
+    var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
+    r.dump();
+    if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
+        warn("8) Guesstimated compression: {.02}%\n",
+             (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
+        for (output[0..r.outpos]) |b, i| {
+            warn("\\x{x02}", b);
+        }
+        warn("\n");
+    }
+}
+
+pub fn main() !void {
+    // fail unless Debug or ReleaseSmall. ReleaseFast and ReleaseSafe fails...
+    comptime assert(builtin.mode == builtin.Mode.Debug
+                    or builtin.mode == builtin.Mode.ReleaseSmall);
     const os = std.os;
     const io = std.io;
     var raw_bytes: [16 * 1024]u8 = undefined;

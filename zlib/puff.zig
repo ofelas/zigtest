@@ -320,6 +320,7 @@ fn construct(h: *huffman, length: []u16, n: usize) !u32 {
         left <<= 1;             // one more bit, double codes left
         left -= i32(h.*.count[len]); // deduct count from possible codes
         if (left < 0) {
+            warn("left={}\n", left);
             return error.OverSubscribed; // over-subscribed--return negative
         }
     }                           // left > 0 means incomplete
@@ -514,7 +515,7 @@ fn fixed(s: *state) !void {
     // build fixed huffman tables if first call (may not be thread safe)
     // candidate for comptime?!?
     if (virgin) {
-        warn("virgin\n");
+        // warn("virgin\n");
         var symbol: usize = 0;
         // literal/length table
         // do this comptime, we actually want to setup lencode and distcode using construct
@@ -547,7 +548,7 @@ fn fixed(s: *state) !void {
         distcode.symbol = &distsym;
 
         var left = construct(&lencode, lengths[0..], FIXLCODES);
-        warn("left={}\n", left);
+        //warn("left={}\n", left);
 
         // distance table
         symbol = 0;
@@ -556,7 +557,7 @@ fn fixed(s: *state) !void {
             symbol += 1;
         }
         left = construct(&distcode, lengths[0..], MAXDCODES);
-        warn("left={}\n", left);
+        //warn("left={}\n", left);
 
         // do this just once
         virgin = false;
@@ -835,7 +836,7 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
         while (true) {
             last = try s.bits(1);    // one if last block
             blktype = try s.bits(2); // block blktype 0..3
-            //warn("*** last={x}, blktype={x}, bitcnt={}, bitbuf={x}, outlen={}, outcnt={}\n", last, blktype, s.bitcnt, s.bitbuf, s.outlen, s.outcnt);
+            warn("*** last={x}, blktype={x}, bitcnt={}, bitbuf={x}, outlen={}, outcnt={}\n", last, blktype, s.bitcnt, s.bitbuf, s.outlen, s.outcnt);
             //err = blktype == 0 ? stored(&s) : (blktype == 1 ? fixed(&s) : (blktype == 2 ? dynamic(&s) : -1));       // blktype == 3, invalid
             if (blktype == 0) {
                 err = try s.stored();
