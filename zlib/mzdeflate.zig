@@ -201,173 +201,6 @@ const BITMASKS = [17]u32 {
 /// compression level.
 const NUM_PROBES = [11]u32 {0, 1, 6, 32, 16, 32, 128, 256, 512, 768, 1500};
 
-//#[derive(Copy, Clone)]
-const SymFreq = struct {
-    key: u16,
-    sym_index: u16,
-};
-
-fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
-    warn("radix_sort_symbols\n");
-    var hist: [2][256]u16 = undefined;
-    for (hist) |*hh| {
-        for (hh.*) |*h| {
-            h.* = 0;
-        }
-    }
-
-    for (symbols0) |freq| {
-        hist[0][(freq.key & 0xFF)] += 1;
-        hist[1][((freq.key >> 8) & 0xFF)] += 1;
-    }
-
-    var n_passes: u4 = 2;
-    if (symbols0.len == hist[1][0]) {
-        n_passes -= 1;
-    }
-
-    var current_symbols = symbols0;
-    var new_symbols = symbols1;
-
-    var pass: u4 = 0;
-    // for pass in 0..n_passes {
-    while (pass > n_passes) : (pass += 1) {
-        var offsets = []usize {0} ** 256;
-        var offset: usize = 0;
-        var i: usize = 0;
-        // for i in 0..256 {
-        while (i < 256) : (i += 1) {
-            offsets[i] = offset;
-            offset += hist[pass][i];
-        }
-
-        for (current_symbols) |*sym| {
-            const j: usize = ((sym.*.key >> (pass << 3)) & 0xFF);
-            new_symbols[offsets[j]] = sym.*;
-            offsets[j] += 1;
-        }
-
-        // mem::swap(&mut current_symbols, &mut new_symbols);
-        var t = current_symbols;
-        current_symbols = new_symbols;
-        new_symbols = t;
-    }
-
-    return current_symbols;
-}
-
-fn calculate_minimum_redundancy(symbols: []SymFreq) void {
-    warn("calculate_minimum_redundancy\n");
-    switch(symbols.len) {
-        0 => {},
-        1 => {
-            symbols[0].key = 1;
-        },
-        else => |n| {
-            symbols[0].key += symbols[1].key;
-            var root: usize = 0;
-            var leaf: usize = 2;
-            var next: usize = 1;
-            // for next in 1..n - 1 {
-            while (next < (n - 1)) : (next += 1) {
-                if ((leaf >= n) or (symbols[root].key < symbols[leaf].key)) {
-                    symbols[next].key = symbols[root].key;
-                    symbols[root].key = truncmask(u16, next);
-                    root += 1;
-                } else {
-                    symbols[next].key = symbols[leaf].key;
-                    leaf += 1;
-                }
-
-                if ((leaf >= n) or ((root < next) and (symbols[root].key < symbols[leaf].key))) {
-                    symbols[next].key = symbols[next].key +% symbols[root].key;
-                    symbols[root].key = truncmask(u16, next);
-                    root += 1;
-                } else {
-                    symbols[next].key = symbols[next].key +% symbols[leaf].key;
-                    leaf += 1;
-                }
-            }
-
-            symbols[n - 2].key = 0;
-            // for next in (0..n - 2).rev() {
-            //     symbols[next].key = symbols[symbols[next].key as usize].key + 1;
-            // }
-            // n=6, next=3,2,1,0
-            next = n - 1;
-            while (next > 0) : (next -= 1) {
-                symbols[next - 1].key = symbols[symbols[next - 1].key].key + 1;
-            }
-
-            var avbl: usize = 1;
-            var used: usize = 0;
-            var dpth: usize = 0;
-            root = (n - 2);
-            next = (n - 1);
-            while (avbl > 0) {
-                while ((root >= 0) and (symbols[root].key == dpth)) {
-                    used += 1;
-                    if (root > 0) {
-                        root -= 1;
-                    } else {
-                        break;
-                    }
-                }
-                while (avbl > used) {
-                    symbols[next].key = truncmask(u16, dpth);
-                    next -= 1;
-                    avbl -= 1;
-                }
-                avbl = 2 * used;
-                dpth += 1;
-                used = 0;
-            }
-        }
-    }
-    warn("calculate_minimum_redundancy done\n");
-}
-
-fn enforce_max_code_size(num_codes: []u32, code_list_len: usize, max_code_size: usize) void {
-    if (code_list_len <= 1) {
-        return;
-    }
-
-    // num_codes[max_code_size] += num_codes[max_code_size + 1..].iter().sum::<i32>();
-    var sum: u32 = 0;
-    for (num_codes[max_code_size + 1..]) |v| {
-        sum += v;
-    }
-    num_codes[max_code_size] += sum;
-    // let total = num_codes[1..max_code_size + 1]
-    //     .iter()
-    //     .rev()
-    //     .enumerate()
-    //     .fold(0u32, |total, (i, &x)| total + ((x as u32) << i));
-    var i: usize = max_code_size;
-    var total: u32 = 0;
-    var ii = u32(0);
-    while (i >= 1) : (i -= 1) {
-        total += (num_codes[i] << truncmask(u5, ii));
-        ii += 1;
-    }
-
-    // for _ in (1 << max_code_size)..total {
-    var x = (usize(1) << truncmask(u5, max_code_size));
-    warn("x={}, total={}, max_code_size={}\n", x, total, max_code_size);
-    while (x < total) : (x += 1) {
-        num_codes[max_code_size] -= 1;
-        i = max_code_size - 1;
-        // for i in (1..max_code_size).rev() {
-        while (i >= 1) : (i -= 1) {
-            if (num_codes[i] != 0) {
-                num_codes[i] -= 1;
-                num_codes[i + 1] += 2;
-                break;
-            }
-        }
-    }
-}
-
 /// Compression callback function type.
 //pub type PutBufFuncPtrNotNull = unsafe extern "C" fn(*const c_void, c_int, *mut c_void) -> bool;
 /// `Option` alias for compression callback function type.
@@ -393,7 +226,6 @@ pub const TDEFL_FORCE_ALL_STATIC_BLOCKS: u32 = 0x00040000;
 /// Force the compressor to only output raw/uncompressed blocks.
 pub const TDEFL_FORCE_ALL_RAW_BLOCKS: u32 = 0x00080000;
 //}
-
 /// Used to generate deflate flags with `create_comp_flags_from_zip_params`.
 //#[repr(i32)]
 //#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -431,6 +263,171 @@ pub const TDEFLFlush = extern enum {
          };
      }
 };
+
+//#[derive(Copy, Clone)]
+const SymFreq = struct {
+    const Self = this;
+    key: u16,
+    sym_index: u16,
+
+    fn dump(self: *const Self) void {
+        warn("key={x04}, sym_index={x04}\n", self.key, self.sym_index);
+    }
+};
+
+const debug = false;
+
+fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
+    if (debug) warn("radix_sort_symbols s0.len={}, s1.len={}\n", symbols0.len, symbols1.len);
+    var hist = [][256]u16 {[]u16 {0} ** 256} ** 2;
+    assert(symbols0.len == symbols1.len);
+
+    for (symbols0) |*freq| {
+        hist[0][@truncate(u8, freq.*.key)] += 1;
+        hist[1][@truncate(u8, (freq.*.key >> 8))] += 1;
+    }
+
+    const n_passes: u4 = 2 - u4(@boolToInt(symbols0.len == hist[1][0]));
+    var current_symbols = symbols0;
+    var new_symbols = symbols1;
+
+    var pass: u4 = 0;
+    // for pass in 0..n_passes {
+    while (pass < n_passes) : (pass += 1) {
+        var offsets = []u16 {0} ** 256;
+        var offset: u16 = 0;
+        // for i in 0..256 {
+        for (offsets) |*ofp, ii| {
+            ofp.* = offset;
+            offset += hist[pass][ii];
+        }
+
+        for (current_symbols) |*sym| {
+            const idx = (sym.*.key >> (pass * 8)) & 0xff;
+            new_symbols[offsets[idx]] = sym.*;
+            offsets[idx] += 1;
+        }
+
+        mem.swap(@typeOf(current_symbols), &current_symbols, &new_symbols);
+    }
+    if (debug == false) {
+        for (current_symbols) |*sym, ii| {
+            warn("sym[{}]", ii); sym.*.dump();
+        }
+    }
+
+    return current_symbols;
+}
+
+fn calculate_minimum_redundancy(symbols: []SymFreq) void {
+    if (debug) warn("calculate_minimum_redundancy, symbols.len={}\n", symbols.len);
+    switch(symbols.len) {
+        0 => {},
+        1 => {
+            symbols[0].key = 1;
+        },
+        else => |n| {
+            symbols[0].key += symbols[1].key;
+            var root: usize = 0;
+            var leaf: usize = 2;
+            var next: usize = 1;
+            // for next in 1..n - 1 {
+            while (next < (n - 1)) : (next += 1) {
+                if ((leaf >= n) or (symbols[root].key < symbols[leaf].key)) {
+                    symbols[next].key = symbols[root].key;
+                    symbols[root].key = @truncate(u16, next);
+                    root += 1;
+                } else {
+                    symbols[next].key = symbols[leaf].key;
+                    leaf += 1;
+                }
+
+                if ((leaf >= n) or ((root < next) and (symbols[root].key < symbols[leaf].key))) {
+                    symbols[next].key = symbols[next].key +% symbols[root].key;
+                    symbols[root].key = @truncate(u16, next);
+                    root += 1;
+                } else {
+                    symbols[next].key = symbols[next].key +% symbols[leaf].key;
+                    leaf += 1;
+                }
+            }
+
+            symbols[n - 2].key = 0;
+            // for next in (0..n - 2).rev() {
+            //     symbols[next].key = symbols[symbols[next].key as usize].key + 1;
+            // }
+            // n=6, next=3,2,1,0
+            var inext = @bitCast(isize, n) - 3;
+            while (inext >= 0) : (inext -= 1) {
+                const idx = @bitCast(usize, inext);
+                symbols[idx].key = symbols[symbols[idx].key].key + 1;
+            }
+
+            var avbl: usize = 1;
+            var used: usize = 0;
+            var dpth: usize = 0;
+            var iroot = @bitCast(isize, n) - 2;
+            inext = @bitCast(isize, n) - 1;
+            while (avbl > 0) {
+                while ((iroot >= 0) and (symbols[@bitCast(usize, iroot)].key == dpth)) {
+                    used += 1;
+                    iroot -= 1;
+                }
+                while (avbl > used) {
+                    assert(inext >= 0);
+                    symbols[@bitCast(usize, inext)].key = @truncate(u16, dpth);
+                    inext -= 1;
+                    avbl -= 1;
+                }
+                avbl = 2 * used;
+                dpth += 1;
+                used = 0;
+            }
+        }
+    }
+    if (debug) warn("calculate_minimum_redundancy done\n");
+}
+
+// argh, overflowing, num_codes was i32
+fn enforce_max_code_size(num_codes: []i32, code_list_len: usize, max_code_size: usize) void {
+    if (debug == false) {
+        warn("num_codes.len={}, code_list_len={}, max_code_size={}\n",
+             num_codes.len, code_list_len, max_code_size);
+    }
+    if (code_list_len <= 1) {
+        return;
+    }
+
+    // num_codes[max_code_size] += num_codes[max_code_size + 1..].iter().sum::<i32>();
+    for (num_codes[max_code_size + 1..]) |v| {
+        num_codes[max_code_size] += v;
+    }
+    // let total = num_codes[1..max_code_size + 1]
+    //     .iter()
+    //     .rev()
+    //     .enumerate()
+    //     .fold(0u32, |total, (i, &x)| total + ((x as u32) << i));
+    var total: u32 = 0;
+    var i: usize = max_code_size;
+    while (i >= 1) : (i -= 1) {
+        total += (@bitCast(u32, num_codes[i]) << @truncate(u5, i));
+    }
+
+    // for _ in (1 << max_code_size)..total {
+    var x = (usize(1) << @truncate(u6, max_code_size));
+    while (x < total) : (x += 1) {
+        num_codes[max_code_size] -= 1;
+        i = max_code_size - 1;
+        // for i in (1..max_code_size).rev() {
+        while (i >= 1) : (i -= 1) {
+            if (num_codes[i] != 0) {
+                num_codes[i] -= 1;
+                num_codes[i + 1] += 2;
+                break;
+            }
+        }
+    }
+}
 
 test "tdefl flush" {
     var flush = TDEFLFlush.fromu32(0) catch TDEFLFlush.Finish;
@@ -536,9 +533,11 @@ pub const HuffmanEntry = struct {
 
     fn optimize_table(self: *Self, table_len: usize,
                       code_size_limit: usize, static_table: bool) void {
-        //warn("table_len={}, code_size_limit={}, static_table={}\n",
-        //     table_len, code_size_limit, static_table);
-        var num_codes = []u32 {0} ** (MAX_SUPPORTED_HUFF_CODESIZE + 1);
+        if (debug) {
+            warn("{} table_len={}, code_size_limit={}, static_table={}\n",
+                 self, table_len, code_size_limit, static_table);
+        }
+        var num_codes = []i32 {0} ** (MAX_SUPPORTED_HUFF_CODESIZE + 1);
         var next_code = []u32 {0} ** (MAX_SUPPORTED_HUFF_CODESIZE + 1);
 
         if (static_table) {
@@ -554,21 +553,24 @@ pub const HuffmanEntry = struct {
             var i: usize = 0;
             while (i < table_len) : (i += 1) {
                 if (self.count[i] != 0) {
-                    symbols0[num_used_symbols] = SymFreq {
-                         .key = self.count[i],
-                         .sym_index = truncmask(u16, i),
-                    };
+                    // symbols0[num_used_symbols] = SymFreq {
+                    //      .key = self.count[i],
+                    //      .sym_index = @truncate(u16, i),
+                    // };
+                    symbols0[num_used_symbols].key = self.count[i];
+                    symbols0[num_used_symbols].sym_index = @truncate(u16, i);
+                    //symbols0[num_used_symbols].dump();
                     num_used_symbols += 1;
                 }
             }
-
+            if (debug) warn("num_used_symbols={}\n", num_used_symbols);
             const symbols = radix_sort_symbols(symbols0[0..num_used_symbols],
                                                symbols1[0..num_used_symbols]);
 
             calculate_minimum_redundancy(symbols);
 
-            for (symbols) |symbol| {
-                num_codes[symbol.key] += 1;
+            for (symbols) |*symbol| {
+                num_codes[symbol.*.key] += 1;
             }
 
             enforce_max_code_size(num_codes[0..], num_used_symbols, code_size_limit);
@@ -576,14 +578,14 @@ pub const HuffmanEntry = struct {
             setmem(u6, self.code_sizes[0..], 0);
             setmem(u16, self.codes[0..], 0);
 
-            var last = num_used_symbols;
+            var last: usize = num_used_symbols;
+            // for i in 1..code_size_limit + 1 {
             i = 1;
             while (i < (code_size_limit + 1)) : (i += 1) {
-                // for i in 1..code_size_limit + 1 {
-                const first: usize = last - num_codes[i];
-                warn("first={}, last={}\n", first, last);
-                for (symbols[first..last]) |symbol| {
-                    self.code_sizes[symbol.sym_index] = truncmask(u6, i);
+                const first: usize = last - @bitCast(u32, num_codes[i]);
+                //warn("first={}, last={}\n", first, last);
+                for (symbols[first..last]) |*symbol| {
+                    self.code_sizes[symbol.*.sym_index] = @truncate(u6, i);
                 }
                 last = first;
             }
@@ -594,29 +596,29 @@ pub const HuffmanEntry = struct {
         var i: usize = 2;
         //for i in 2..code_size_limit + 1 {
         while (i < (code_size_limit + 1)) : (i += 1) {
-            j = (j + num_codes[i - 1]) << 1;
+            j = (j + @bitCast(u32, num_codes[i - 1])) << 1;
             next_code[i] = j;
         }
 
         i = 0;
         while (i < table_len) : (i += 1) {
             const code_size = &self.code_sizes[i];
+            const huff_code = &self.codes[i];
             //DEBUG warn("i={}, code_size={}\n", i, code_size);
             if (code_size.* == 0) {
                 continue;
             }
             var code = next_code[code_size.*];
             next_code[code_size.*] += 1;
-            var rev_code: u32 = 0;
 
+            var rev_code: u32 = 0;
             j = 0;
             while (j < code_size.*) : (j += 1) {
                 rev_code = (rev_code << 1) | (code & 1);
                 code >>= 1;
             }
-
-            //warn("i={}, j={}, rev_code={}\n", i, j, rev_code);
-            self.codes[i] = @truncate(u16, rev_code & @maxValue(u16));
+            //warn("i={}, j={}, rev_code={x04}\n", i, j, rev_code);
+            huff_code.* = @truncate(u16, rev_code);
         }
     }
 
@@ -663,21 +665,17 @@ pub const Huffman = struct {
     }
 
     fn compress_block(self: *Self, output: *OutputBuffer, lz: *LZ, static_block: bool) !bool {
-        //warn("compress_block {}\n", static_block);
-        //lz.dump();
         if (static_block) {
             self.start_static_block(output);
         } else {
             try self.start_dynamic_block(output);
-            //self.start_static_block(output);
         }
 
-        //lz.dump();
         return compress_lz_codes(self, output, lz.codes[0..lz.code_position]);
     }
 
     fn start_static_block(self: *Self, output: *OutputBuffer) void {
-        warn("start_static_block\n");
+        if (debug) warn("{} start_static_block\n", self);
         setmem(u6, self.litlen.code_sizes[0..144], 8);
         setmem(u6, self.litlen.code_sizes[144..256], 9);
         setmem(u6, self.litlen.code_sizes[256..280], 7);
@@ -692,14 +690,12 @@ pub const Huffman = struct {
     }
 
     fn start_dynamic_block(self: *Self, output: *OutputBuffer) !void {
-        warn("start_dynamic_block\n");
+        if (debug) warn("{} start_dynamic_block\n", self);
         // There will always be one, and only one end of block code.
         self.litlen.count[256] = 1;
 
         self.litlen.optimize_table(MAX_HUFF_SYMBOLS_0, 15, false);
         self.dist.optimize_table(MAX_HUFF_SYMBOLS_1, 15, false);
-
-        warn("optimized\n");
 
         //     &self.code_sizes[0][257..286]
         //         .iter()
@@ -707,14 +703,14 @@ pub const Huffman = struct {
         //         .take_while(|&x| *x == 0)
         //         .count();
         var count: u32 = 0;
-        var i: u32 = 286 - 1;
-        while (i >= 257) : (i -= 1) {
+        var i: u32 = 285;
+        const num_lit_codes = 286 - while (i >= 257) : (i -= 1) {
             if (self.litlen.code_sizes[i] != 0) {
-                break;
+                //warn("self.litlen.code_sizes[{}]={}\n", i - 1, self.litlen.code_sizes[i - 1]);
+                break count;
             }
             count += 1;
-        }
-        const num_lit_codes = 286 - count;
+        } else  count;
 
         //     &self.code_sizes[1][1..30]
         //         .iter()
@@ -723,14 +719,14 @@ pub const Huffman = struct {
         //         .count();
         count = 0;
         i = 30 - 1;
-        while (i <= 1) : (i -= 1) {
+        const num_dist_codes = 30 - while (i >= 1) : (i -= 1) {
             if (self.dist.code_sizes[i] != 0) {
-                break;
+                break count;
             }
             count += 1;
-        }
-        const num_dist_codes = 30 - count;
-        warn("lit={}, dist={}\n", num_lit_codes, num_dist_codes);
+        } else count;
+        //const num_dist_codes = 30 - count;
+        if (debug) warn("lit={}, dist={}\n", num_lit_codes, num_dist_codes);
 
         var code_sizes_to_pack = []u8 {0} ** (MAX_HUFF_SYMBOLS_0 + MAX_HUFF_SYMBOLS_1);
         var packed_code_sizes = []u8 {0} ** (MAX_HUFF_SYMBOLS_0 + MAX_HUFF_SYMBOLS_1);
@@ -740,11 +736,13 @@ pub const Huffman = struct {
         // code_sizes_to_pack[..num_lit_codes].copy_from_slice(&self.code_sizes[0][..num_lit_codes]);
         for (self.litlen.code_sizes[0..num_lit_codes]) |cs, ii|{
             code_sizes_to_pack[ii] = cs;
+            //warn("lit total {} {}\n", num_lit_codes, ii);
         }
 
         // code_sizes_to_pack[num_lit_codes..total_code_sizes_to_pack]
         //     .copy_from_slice(&self.code_sizes[1][..num_dist_codes]);
         for (self.dist.code_sizes[0..num_dist_codes]) |cs, ii| {
+            //warn("dist total {} {}\n", total_code_sizes_to_pack, num_lit_codes + ii);
             code_sizes_to_pack[num_lit_codes + ii] = cs;
         }
 
@@ -757,8 +755,9 @@ pub const Huffman = struct {
         setmem(u16, self.huffcodes.count[0..MAX_HUFF_SYMBOLS_2], 0);
 
         var packed_code_sizes_cursor = Cursor([]u8){.pos= 0, .inner = packed_code_sizes[0..]};
-        for (code_sizes_to_pack[0..total_code_sizes_to_pack]) |code_size| {
-            if (code_size == 0) {
+        for (code_sizes_to_pack[0..total_code_sizes_to_pack]) |*code_size, ii| {
+            // warn("code_size[{}]={}\n", ii, code_size.*);
+            if (code_size.* == 0) {
                 try rle.prev_code_size(&packed_code_sizes_cursor, self);
                 rle.z_count += 1;
                 if (rle.z_count == 138) {
@@ -766,12 +765,12 @@ pub const Huffman = struct {
                 }
             } else {
                 try rle.zero_code_size(&packed_code_sizes_cursor, self);
-                if (code_size != rle.p_code_size) {
+                if (code_size.* != rle.p_code_size) {
                     try rle.prev_code_size(&packed_code_sizes_cursor, self);
-                    self.huffcodes.count[code_size] +%= 1;
+                    self.huffcodes.count[code_size.*] +%= 1;
                     //self.count[HUFF_CODES_TABLE][code_size as usize] =
                     //    self.count[HUFF_CODES_TABLE][code_size as usize].wrapping_add(1);
-                    var ary = [1]u8 {code_size};
+                    var ary = [1]u8 {code_size.*};
                     try packed_code_sizes_cursor.write_all(ary[0..]);
                 } else {
                     rle.repeat_count += 1;
@@ -780,7 +779,7 @@ pub const Huffman = struct {
                     }
                 }
             }
-            rle.p_code_size = code_size;
+            rle.p_code_size = code_size.*;
         }
 
         if (rle.repeat_count != 0) {
@@ -788,7 +787,7 @@ pub const Huffman = struct {
         } else {
             try rle.zero_code_size(&packed_code_sizes_cursor, self);
         }
-
+        // WIP: Seems we are failing in this region
         self.huffcodes.optimize_table(MAX_HUFF_SYMBOLS_2, 7, false);
 
         output.put_bits(2, 2);
@@ -796,7 +795,6 @@ pub const Huffman = struct {
         output.put_bits((num_lit_codes - 257), 5);
         output.put_bits((num_dist_codes - 1), 5);
 
-        var num_bit_lengths: u32 = 18;
         //     HUFFMAN_LENGTH_ORDER
         //         .iter()
         //         .rev()
@@ -805,7 +803,7 @@ pub const Huffman = struct {
         //         })
         //         .count();
         count = 0;
-        i = truncmask(u32, HUFFMAN_LENGTH_ORDER.len);
+        i = @truncate(u32, HUFFMAN_LENGTH_ORDER.len);
         while (i > 0) : (i -= 1) {
             const swizzle = HUFFMAN_LENGTH_ORDER[i - 1];
             if (self.huffcodes.code_sizes[swizzle] != 0) {
@@ -813,12 +811,13 @@ pub const Huffman = struct {
             }
             count += 1;
         }
-        num_bit_lengths -= count;
+        var num_bit_lengths: u32 = 18 - count;
 
         num_bit_lengths = MAX(u32, 4, num_bit_lengths + 1);
         output.put_bits(num_bit_lengths - 4, 4);
         for (HUFFMAN_LENGTH_ORDER[0..num_bit_lengths]) |swizzle| {
-             output.put_bits(self.huffcodes.code_sizes[swizzle], 3);
+            //warn("self.huffcodes.code_sizes[{}]={}\n", swizzle, self.huffcodes.code_sizes[swizzle]);
+            output.put_bits(self.huffcodes.code_sizes[swizzle], 3);
         }
 
         var packed_code_size_index: usize = 0;
@@ -827,8 +826,9 @@ pub const Huffman = struct {
             const code = packed_code_sizes[packed_code_size_index];
             packed_code_size_index += 1;
             assert(code < MAX_HUFF_SYMBOLS_2);
-            output.put_bits(self.huffcodes.codes[code],
-                            self.huffcodes.code_sizes[code]);
+            // warn("self.huffcodes.codes[{}] = {}, self.huffcodes.code_sizes[{}]) = {}\n",
+            //      code, self.huffcodes.codes[code], code, self.huffcodes.code_sizes[code]);
+            output.put_bits(self.huffcodes.codes[code], self.huffcodes.code_sizes[code]);
             if (code >= 16) {
                 const ary = []u5 {2, 3, 7};
                 output.put_bits(
@@ -836,8 +836,7 @@ pub const Huffman = struct {
                 packed_code_size_index += 1;
             }
         }
-
-        // Ok(())
+        if (debug) warn("packed_code_size_index={}\n", packed_code_size_index);
     }
 
 };
@@ -925,7 +924,7 @@ const Dictionary = struct {
     fn read_unaligned(self: *Self, comptime T: type, pos: usize) T {
         //ptr::read_unaligned((&self.b.dict as *const [u8] as *const u8).offset(pos) as
         //                    *const T)
-        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.Endian.Big);
+        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.endian);
     }
 
     /// Try to find a match for the data at lookahead_pos in the dictionary that is
@@ -1154,7 +1153,11 @@ const OutputBuffer = struct {
     pub inner: Cursor([]u8),
     pub local: bool,
     pub bit_buffer: u32,
-    pub bits_in: u5,
+    pub bits_in: u32,
+
+    fn dump(self: *const Self) void {
+        warn("{} {x08} {}\n", self, self.bit_buffer, self.bits_in);
+    }
 
     fn len(self: *Self) usize {
         return self.inner.len();
@@ -1168,12 +1171,12 @@ const OutputBuffer = struct {
     fn put_bits(self: *Self, bits: u32, length: u32) void {
         // assert!(bits <= ((1u32 << len) - 1u32));
         //warn("put_bits({x08},{})\n", bits, length);
-        self.bit_buffer |= bits << self.bits_in;
-        self.bits_in += truncmask(u5, length);
+        self.bit_buffer |= bits << @truncate(u5, self.bits_in);
+        self.bits_in += length;
         while (self.bits_in >= 8) {
             const pos = self.inner.position();
             // .get_mut()
-            self.inner.inner[pos] = truncmask(u8, self.bit_buffer);
+            self.inner.inner[pos] = @truncate(u8, self.bit_buffer);
             self.inner.set_position(pos + 1);
             self.bit_buffer >>= 8;
             self.bits_in -= 8;
@@ -1201,7 +1204,7 @@ const OutputBuffer = struct {
     fn pad_to_bytes(self: *Self) void {
         if (self.bits_in != 0) {
             const length = 8 - self.bits_in;
-            warn("pad_to_bytes bits_in={}, length={}\n", self.bits_in, length);
+            if (debug) warn("pad_to_bytes bits_in={}, length={}\n", self.bits_in, length);
             self.put_bits(0, length);
         }
     }
@@ -1235,7 +1238,7 @@ const SavedOutputBuffer = struct {
     const Self = this;
     pub pos: usize,
     pub bit_buffer: u32,
-    pub bits_in: u5,
+    pub bits_in: u32,
     pub local: bool,
 
     fn dump(self: *const Self) void {
@@ -1248,7 +1251,7 @@ const BitBuffer = struct {
     const Self = this;
     // space for up to 8 bytes
     pub bit_buffer: u64,
-    pub bits_in: u6,
+    pub bits_in: u32,
 
     fn dump(self: *Self) void {
         warn("bit_buffer={x016}, bits_in={}\n", self.bit_buffer, self.bits_in);
@@ -1258,7 +1261,7 @@ const BitBuffer = struct {
         // what if we want to write a complete u64?
         //self.dump();
         //warn("BitBuffer put_fast({x016}, {})\n", bits, len);
-        self.bit_buffer |= (bits << self.bits_in);
+        self.bit_buffer |= (bits << @truncate(u6, self.bits_in));
         self.bits_in += len;
         //self.dump();
     }
@@ -1278,7 +1281,8 @@ const BitBuffer = struct {
         try output.inner.seek(SeekFrom {.Current = self.bits_in >> 3 });
         //warn("Bits out {}\n", self.bits_in & ~@typeOf(self.bits_in)(7));
         // Update the bit buffer
-        self.bit_buffer >>= self.bits_in & ~@typeOf(self.bits_in)(7);
+        const shift = @truncate(u6, self.bits_in);
+        self.bit_buffer >>= shift & ~@typeOf(shift)(7);
         // Update the number of bits
         self.bits_in &= 7;
         //warn("<- BitBuffer flush pos={} {x016} bits_in={}\n", pos, self.bit_buffer, self.bits_in);
@@ -1293,12 +1297,15 @@ pub const RLE = struct {
     pub repeat_count: u16,
     pub p_code_size: u8,
 
+    fn dump(self: *const Self) void {
+        warn("{} z={}, rep={}, cs={}\n", self, self.z_count, self.repeat_count, self.p_code_size);
+    }
+
     fn prev_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman ) !void {
         var counts = &h.huffcodes.count;
         if (self.repeat_count != 0) {
             if (self.repeat_count < 3) {
-                counts[self.p_code_size] = counts[self.p_code_size]
-                    +% self.repeat_count;
+                counts.*[self.p_code_size] +%= self.repeat_count;
                 const code = self.p_code_size;
                 // Write for Vec<u8>/extend_from_slice
                 // packed_code_sizes.write_all(
@@ -1307,10 +1314,10 @@ pub const RLE = struct {
                 // )?;
                 var ary = [3]u8 {code, code, code};
                 warn("repeat_count={}\n", self.repeat_count);
-                try packed_code_sizes.write_all(ary[0..self.repeat_count - 1]);
+                try packed_code_sizes.write_all(ary[0..self.repeat_count]);
             } else {
-                counts[16] = counts[16] +% 1;
-                var ary = [2]u8 {16, @truncate(u8, (self.repeat_count - 3) & 0xff)};
+                counts.*[16] +%=  1;
+                var ary = [2]u8 {16, @truncate(u8, (self.repeat_count - 3))};
                 try packed_code_sizes.write_all(ary[0..]);
             }
             self.repeat_count = 0;
@@ -1321,25 +1328,25 @@ pub const RLE = struct {
         var counts = &h.huffcodes.count;
         if (self.z_count != 0) {
             if (self.z_count < 3) {
-                counts[0] +%= self.z_count;
+                counts.*[0] +%= @truncate(@typeOf(counts.*[0]), self.z_count);
                 // packed_code_sizes.write_all(
                 //     &[0, 0, 0][..self.z_count as usize],
                 // )?;
                 const ary = [3]u8 {0,0,0};
                 try packed_code_sizes.write_all(ary[0..self.z_count]);
             } else if (self.z_count <= 10) {
-                counts[17] +%= 1;
+                counts.*[17] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[17, (self.z_count - 3) as u8][..],
                 // )?;
-                const ary = [2]u8 {17, truncmask(u8, self.z_count - 3)};
+                const ary = [2]u8 {17, @truncate(u8, self.z_count - 3)};
                 try packed_code_sizes.write_all(ary[0..]);
             } else {
-                counts[18] +%= 1;
+                counts.*[18] +%= 1;
                 // packed_code_sizes.write_all(
                 //     &[18, (self.z_count - 11) as u8][..],
                 // )?;
-                const ary = [2]u8 {18, truncmask(u8, self.z_count - 11)};
+                const ary = [2]u8 {18, @truncate(u8, self.z_count - 11)};
                 try packed_code_sizes.write_all(ary[0..]);
             }
             self.z_count = 0;
@@ -1370,7 +1377,7 @@ const Params = struct {
     pub prev_return_status: TDEFLStatus,
 
     pub saved_bit_buffer: u32,
-    pub saved_bits_in: u5,
+    pub saved_bits_in: u32,
 
     pub local_buf: LocalBuf,
 
@@ -1422,11 +1429,11 @@ const LZ = struct {
 
     fn init() Self {
         var lz = Self {
-            .codes = []u8 {0} ** LZ_CODE_BUF_SIZE,
             .code_position = 1,
             .flag_position = 0,
             .total_bytes = 0,
             .num_flags_left = 8,
+            .codes = []u8 {0} ** LZ_CODE_BUF_SIZE,
         };
         //lz.dump();
         return lz;
@@ -1443,7 +1450,7 @@ const LZ = struct {
             (self.get_flag()).* = 0;
             self.code_position -= 1;
         } else {
-            (self.get_flag()).* >>= truncmask(u3, self.num_flags_left);
+            (self.get_flag()).* >>= @truncate(u3, self.num_flags_left);
         }
         //warn("init_flags: num_flags_left={}, {}, {}, {x02}\n", self.num_flags_left, self.code_position, self.flag_position, (self.get_flag()).*);
     }
@@ -1512,9 +1519,7 @@ pub const Compressor = struct {
     /// in the input buffer and the current position in the output buffer.
     pub fn compress(self: *Self, in_buf: []u8, out_buf: []u8,
                     flush: TDEFLFlush) CompressionResult {
-        //warn("compress\n");
         var callback = Callback.new_callback_buf(in_buf, out_buf);
-        //callback.dump();
         return compress_inner(self, &callback, flush);
     }
 
@@ -1559,11 +1564,11 @@ const CallbackBuf = struct {
                 self.out_buf[params.out_buf_ofs + ii] = b.*;
             }
 
-            const nn = truncmask(u32, n);
+            const nn = @truncate(u32, n);
             params.out_buf_ofs += nn;
             if (saved_output.pos != nn) {
                 params.flush_ofs = nn;
-                params.flush_remaining = truncmask(u32, saved_output.pos - n);
+                params.flush_remaining = @truncate(u32, saved_output.pos - n);
             }
         } else {
             params.out_buf_ofs += saved_output.pos;
@@ -1657,13 +1662,12 @@ const Callback = struct {
 
 fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !bool {
     //warn("compress_lz_codes\n");
-    var flags: u32 = 1;
+    if (debug) warn("compress_lz_codes len={}\n", lz_code_buf.len);
+    var flags: u32 = 1; 
     var bb = BitBuffer {
         .bit_buffer = u64(output.bit_buffer),
         .bits_in = output.bits_in,
     };
-
-    //bb.dump();
 
     var i: usize = 0;
     while (i < lz_code_buf.len) {
@@ -1685,13 +1689,12 @@ fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !
 
             i += 3;
 
-            assert(huff.litlen.code_sizes[LEN_SYM[match_len]] != 0);
+            //assert(huff.litlen.code_sizes[LEN_SYM[match_len]] != 0);
             //warn("LEN[{}]={},{}, {}\n", match_len,LEN_SYM[match_len],  huff.litlen.codes[LEN_SYM[match_len]],  huff.litlen.code_sizes[LEN_SYM[match_len]]);
             const lensym = LEN_SYM[match_len];
             const lenextra = LEN_EXTRA[match_len];
             bb.put_fast(u64(huff.litlen.codes[lensym]), huff.litlen.code_sizes[lensym]);
             bb.put_fast(u64(match_len) & u64(BITMASKS[lenextra]), lenextra);
-            //bb.dump();
 
             if (match_dist < 512) {
                 sym = SMALL_DIST_SYM[match_dist];
@@ -1707,7 +1710,7 @@ fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !
             bb.put_fast(u64(huff.dist.codes[sym]), huff.dist.code_sizes[sym]);
             bb.put_fast(
                 u64(match_dist) & u64(BITMASKS[num_extra_bits]),
-                truncmask(u6, num_extra_bits));
+                @truncate(u6, num_extra_bits));
         } else {
             // The lz code was a literal
             //warn("literal\n");
@@ -1736,25 +1739,22 @@ fn compress_lz_codes(huff: *Huffman, output: *OutputBuffer, lz_code_buf: []u8) !
     output.bit_buffer = 0;
     while (bb.bits_in > 0) {
         //bb.dump();
-        const n = MIN(u6, bb.bits_in, 16);
-        output.put_bits(truncmask(u32, bb.bit_buffer) & BITMASKS[n], n);
-        bb.bit_buffer >>= n;
+        const n = MIN(@typeOf(bb.bits_in), bb.bits_in, 16);
+        output.put_bits(@truncate(u32, bb.bit_buffer) & BITMASKS[n], n);
+        bb.bit_buffer >>= @truncate(u6, n);
         bb.bits_in -= n;
     }
 
     // Output the end of block symbol.
-    //warn("Output the end of block symbol\n");
     output.put_bits(huff.litlen.codes[256], huff.litlen.code_sizes[256]);
-    //warn("Output the end of block symbol\n");
 
     return true;
 }
 
 fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
-    //warn("flush_block\n");
+    if (debug) warn("flush_block\n");
     var saved_buffer: SavedOutputBuffer = undefined;
     {
-        //callback.dump();
         var output = callback.out.new_output_buffer(
             &d.params.local_buf.b,
             d.params.out_buf_ofs,
@@ -1789,18 +1789,20 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
             comp_success = try d.huff.compress_block(&output, &d.lz, use_static);
         }
 
-        // If we failed to compress anything and the output would take up more space than the output
-        // data, output a stored block instead, which has at most 5 bytes of overhead.
-        // We only use some simple heuristics for now.
-        // A stored block will have an overhead of at least 4 bytes containing the block length
-        // but usually more due to the length parameters having to start at a byte boundary and thus
-        // requiring up to 5 bytes of padding.
-        // As a static block will have an overhead of at most 1 bit per byte
-        // (as literals are either 8 or 9 bytes), a raw block will
-        // never take up less space if the number of input bytes are less than 32.
-        const expanded = (d.lz.total_bytes > 32) and
-            (output.inner.position() - saved_buffer.pos + 1 >= d.lz.total_bytes) and
-            (d.dict.lookahead_pos - d.dict.code_buf_dict_pos <= d.dict.size);
+        // If we failed to compress anything and the output would take
+        // up more space than the output data, output a stored block
+        // instead, which has at most 5 bytes of overhead.  We only
+        // use some simple heuristics for now.  A stored block will
+        // have an overhead of at least 4 bytes containing the block
+        // length but usually more due to the length parameters having
+        // to start at a byte boundary and thus requiring up to 5
+        // bytes of padding.  As a static block will have an overhead
+        // of at most 1 bit per byte (as literals are either 8 or 9
+        // bytes), a raw block will never take up less space if the
+        // number of input bytes are less than 32.
+        const expanded = (d.lz.total_bytes > 32)
+            and ((output.inner.position() - saved_buffer.pos + 1) >= d.lz.total_bytes)
+            and ((d.dict.lookahead_pos - d.dict.code_buf_dict_pos) <= d.dict.size);
 
         if (use_raw_block or expanded) {
             output.load(saved_buffer);
@@ -1867,7 +1869,7 @@ fn flush_block(d: *Compressor, callback: *Callback, flush: TDEFLFlush) !u32 {
 }
 
 fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
-    //warn("record_literal(*, {c}/{x})\n", lit, lit);
+    if (debug) warn("record_literal(*, {c}/{x})\n", lit, lit);
     //lz.dump();
     lz.total_bytes += 1;
     lz.write_code(lit);
@@ -1879,7 +1881,7 @@ fn record_literal(h: *Huffman, lz: *LZ, lit: u8) void {
 }
 
 fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
-    //warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
+    if (debug) warn("record_match(len={}, dist={})\n", pmatch_len, pmatch_dist);
     var match_len = pmatch_len;
     var match_dist = pmatch_dist;
     assert(match_len >= MIN_MATCH_LEN);
@@ -1890,9 +1892,9 @@ fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
     match_dist -= 1;
     match_len -= MIN_MATCH_LEN;
     assert(match_len < 256);
-    lz.write_code(truncmask(u8, match_len));
-    lz.write_code(truncmask(u8, match_dist));
-    lz.write_code(truncmask(u8, match_dist >> 8));
+    lz.write_code(@truncate(u8, match_len));
+    lz.write_code(@truncate(u8, match_dist));
+    lz.write_code(@truncate(u8, match_dist >> 8));
 
     (lz.get_flag()).* >>= 1;
     (lz.get_flag()).* |= 0x80;
@@ -1903,9 +1905,12 @@ fn record_match(h: *Huffman, lz: *LZ, pmatch_len: u32, pmatch_dist: u32) void {
     h.litlen.count[LEN_SYM[match_len]] += 1;
 }
 
+fn LZ_DICT_POS(pos: u32) u32 {
+    return pos &  u32(LZ_DICT_SIZE_MASK);
+}
+
 fn compress_normal(d: *Compressor, callback: *Callback) bool {
-    //warn("compress_normal\n");
-    //callback.dump();
+    if (debug) warn("compress_normal\n");
     var src_pos = d.params.src_pos;
     var in_buf = if (callback.in_buf) |in_buf| in_buf else return true;
 
@@ -1918,16 +1923,15 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
     while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None) and (lookahead_size != 0))) {
         const src_buf_left = in_buf.len - src_pos;
         const num_bytes_to_process =
-            MIN(u32, truncmask(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
+            MIN(u32, @truncate(u32, src_buf_left), MAX_MATCH_LEN - lookahead_size);
 
         if ((lookahead_size + d.dict.size) >= (MIN_MATCH_LEN - 1) and (num_bytes_to_process > 0)) {
             var dictb = &d.dict.b;
 
-            var dst_pos = (lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK;
-            var ins_pos = lookahead_pos + lookahead_size - 2;
-            var hash = (u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
-                                LZ_HASH_SHIFT) ^
-                (dictb.dict[((ins_pos + 1) & LZ_DICT_SIZE_MASK)]);
+            var dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
+            var ins_pos =  LZ_DICT_POS(lookahead_pos + lookahead_size - 2);
+            var hash = (u32(dictb.dict[LZ_DICT_POS(ins_pos)]) << LZ_HASH_SHIFT)
+                ^ (dictb.dict[LZ_DICT_POS(ins_pos + 1)]);
 
             lookahead_size += num_bytes_to_process;
             for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
@@ -1937,17 +1941,17 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
                 }
 
                 hash = ((u32(hash) << LZ_HASH_SHIFT) ^ u32(c)) & u32(LZ_HASH_SIZE - 1);
-                dictb.next[(ins_pos & LZ_DICT_SIZE_MASK)] = dictb.hash[hash];
+                dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
 
                 dictb.hash[hash] = @truncate(u16, ins_pos & 0xffff);
-                dst_pos = (dst_pos + 1) & LZ_DICT_SIZE_MASK;
+                dst_pos = LZ_DICT_POS(dst_pos + 1);
                 ins_pos += 1;
             }
             src_pos += num_bytes_to_process;
         } else {
             var dictb = &d.dict.b;
             for (in_buf[src_pos..src_pos + num_bytes_to_process]) |c| {
-                const dst_pos = (lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK;
+                const dst_pos = LZ_DICT_POS(lookahead_pos + lookahead_size);
                 dictb.dict[dst_pos] = c;
                 //warn("c={c}, dst_pos={}\n", c, dst_pos);
                 if (dst_pos < (MAX_MATCH_LEN - 1)) {
@@ -1962,12 +1966,11 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
                     const hash =
                         ((u32(dictb.dict[(ins_pos & LZ_DICT_SIZE_MASK)]) <<
                           (LZ_HASH_SHIFT * 2)) ^
-                         ((u32(dictb.dict[((ins_pos + 1) & LZ_DICT_SIZE_MASK)]) <<
-                           LZ_HASH_SHIFT) ^
+                         ((u32(dictb.dict[LZ_DICT_POS(ins_pos + 1)]) << LZ_HASH_SHIFT) ^
                           u32(c))) & u32(LZ_HASH_SIZE - 1);
 
-                    dictb.next[(ins_pos & LZ_DICT_SIZE_MASK)] = dictb.hash[hash];
-                    dictb.hash[hash] = @truncate(u16, ins_pos & 0xffff);
+                    dictb.next[LZ_DICT_POS(ins_pos)] = dictb.hash[hash];
+                    dictb.hash[hash] = @truncate(u16, ins_pos);
                 }
             }
 
@@ -1986,11 +1989,16 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
         if (d.params.flags & (TDEFL_RLE_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) {
             if ((d.dict.size != 0) and ((d.params.flags & TDEFL_FORCE_ALL_RAW_BLOCKS) == 0)) {
                 const c = d.dict.b.dict[((cur_pos -% 1) & LZ_DICT_SIZE_MASK)];
-                warn("NOT implemented\n");
-                // cur_match_len = d.dict.b.dict[cur_pos..(cur_pos + lookahead_size)]
-                //     .iter()
-                //     .take_while(|&x| *x == c)
-                //     .count() as u32;
+                var i: usize = cur_pos;
+                var count: u32 = 0;
+                while (i < (cur_pos + lookahead_size - 1)) : (i += 1) {
+                    if (d.dict.b.dict[i] != c) {
+                        break;
+                    }
+                    count += 1;
+                }
+                warn("count={}\n", count);
+                cur_match_len = count;
                 if (cur_match_len < MIN_MATCH_LEN) {
                     cur_match_len = 0;
                 } else {
@@ -2010,8 +2018,10 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
             cur_match_len = dist_len.length;
         }
 
-        const far_and_small = (cur_match_len == MIN_MATCH_LEN) and (cur_match_dist >= (8 * 1024));
-        const filter_small = (((d.params.flags & TDEFL_FILTER_MATCHES) != 0) and (cur_match_len <= 5));
+        const far_and_small = (cur_match_len == MIN_MATCH_LEN)
+            and (cur_match_dist >= (8 * 1024));
+        const filter_small = (((d.params.flags & TDEFL_FILTER_MATCHES) != 0)
+                              and (cur_match_len <= 5));
         if (far_and_small or filter_small or (cur_pos == cur_match_dist)) {
             cur_match_dist = 0;
             cur_match_len = 0;
@@ -2091,7 +2101,7 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
     d.params.saved_match_dist = saved_match_dist;
     d.params.saved_match_len = saved_match_len;
 
-    d.dict.dump();
+    //d.dict.dump();
 
     return true;
 }
@@ -2100,24 +2110,22 @@ fn compress_normal(d: *Compressor, callback: *Callback) bool {
 const COMP_FAST_LOOKAHEAD_SIZE: u32 = 4096;
 
 fn compress_fast(d: *Compressor, callback: *Callback)  bool {
-    warn("compress_fast\n");
+    if (debug) warn("compress_fast\n");
     var src_pos = d.params.src_pos;
     var lookahead_size = d.dict.lookahead_size;
     var lookahead_pos = d.dict.lookahead_pos;
 
     var cur_pos = lookahead_pos & LZ_DICT_SIZE_MASK;
     const in_buf = if (callback.in_buf) |buf|  buf else return true;
-    // let in_buf = match callback.in_buf {
-    //     None => return true,
-    //     Some(in_buf) => in_buf,
-    // };
 
     assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
 
-    while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None) and (lookahead_size > 0))) {
+    while ((src_pos < in_buf.len) or ((d.params.flush != TDEFLFlush.None)
+                                      and (lookahead_size > 0))) {
         var dst_pos: usize = ((lookahead_pos + lookahead_size) & LZ_DICT_SIZE_MASK);
-        var num_bytes_to_process = MIN(usize, in_buf.len - src_pos, (COMP_FAST_LOOKAHEAD_SIZE - lookahead_size));
-        lookahead_size += truncmask(@typeOf(lookahead_size), num_bytes_to_process);
+        var num_bytes_to_process = MIN(usize, in_buf.len - src_pos,
+                                       (COMP_FAST_LOOKAHEAD_SIZE - lookahead_size));
+        lookahead_size += @truncate(@typeOf(lookahead_size), num_bytes_to_process);
 
         while (num_bytes_to_process != 0) {
             const n = MIN(usize, LZ_DICT_SIZE - dst_pos, num_bytes_to_process);
@@ -2158,9 +2166,9 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                 LEVEL1_HASH_SIZE_MASK;
 
             var probe_pos: u32 = d.dict.b.hash[hash];
-            d.dict.b.hash[hash] = truncmask(u16, lookahead_pos);
+            d.dict.b.hash[hash] = @truncate(u16, lookahead_pos);
 
-            var cur_match_dist = truncmask(u16, lookahead_pos - probe_pos);
+            var cur_match_dist = @truncate(u16, lookahead_pos - probe_pos);
             if (cur_match_dist <= d.dict.size) {
                 probe_pos &= LZ_DICT_SIZE_MASK;
                 // # Unsafe
@@ -2195,7 +2203,7 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                                 q += 8;
                             } else {
                                 const trailing = @ctz(xor_data);
-                                break :find_match truncmask(u32, p) - cur_pos + (trailing >> 3);
+                                break :find_match @truncate(u32, p) - cur_pos + (trailing >> 3);
                             }
                         }
 
@@ -2208,7 +2216,7 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
 
                     if ((cur_match_len < MIN_MATCH_LEN) or ((cur_match_len == MIN_MATCH_LEN) and (cur_match_dist >= 8 * 1024)))
                     {
-                        const lit = truncmask(u8, first_trigram);
+                        const lit = @truncate(u8, first_trigram);
                         cur_match_len = 1;
                         d.lz.write_code(lit);
                         (d.lz.get_flag()).* >>= 1;
@@ -2222,12 +2230,12 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                         assert(cur_match_dist <= LZ_DICT_SIZE);
                         cur_match_dist -= 1;
 
-                        d.lz.write_code(truncmask(u8, cur_match_len - MIN_MATCH_LEN));
+                        d.lz.write_code(@truncate(u8, cur_match_len - MIN_MATCH_LEN));
                         // # Unsafe
                         // code_position is checked to be smaller than the lz buffer size
                         // at the start of this function and on every loop iteration.
                         //  unsafe {
-                        write_u16_le_uc(truncmask(u16, cur_match_dist),
+                        write_u16_le_uc(@truncate(u16, cur_match_dist),
                                         d.lz.codes[0..],
                                         d.lz.code_position);
                         d.lz.code_position += 2;
@@ -2244,9 +2252,9 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                         d.huff.litlen.count[LEN_SYM[(cur_match_len - MIN_MATCH_LEN)]] += 1;
                     }
                 } else {
-                    d.lz.write_code(truncmask(u8, first_trigram));
+                    d.lz.write_code(@truncate(u8, first_trigram));
                     (d.lz.get_flag()).* >>= 1;
-                    d.huff.litlen.count[truncmask(u8, first_trigram)] += 1;
+                    d.huff.litlen.count[@truncate(u8, first_trigram)] += 1;
                 }
 
                 d.lz.consume_flag();
@@ -2264,6 +2272,14 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                     var n: u32 = 0;
                     if (flush_block(d, callback, TDEFLFlush.None)) |nn| {
                         n = nn;
+                        if (n != 0) {
+                            d.params.src_pos = src_pos;
+                            return n > 0;
+                        }
+                        assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
+
+                        lookahead_size = d.dict.lookahead_size;
+                        lookahead_pos = d.dict.lookahead_pos;
                     } else |err| {
                         d.params.src_pos = src_pos;
                         d.params.prev_return_status = TDEFLStatus.PutBufFailed;
@@ -2277,14 +2293,6 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                     //      }
                     //      Ok(status) => status,
                     //  };
-                    if (n != 0) {
-                        d.params.src_pos = src_pos;
-                        return n > 0;
-                    }
-                    assert(d.lz.code_position < (LZ_CODE_BUF_SIZE - 2));
-
-                    lookahead_size = d.dict.lookahead_size;
-                    lookahead_pos = d.dict.lookahead_pos;
                 }
             }
         }
@@ -2310,26 +2318,18 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
                 var n: u32 = 0;
                 if (flush_block(d, callback, TDEFLFlush.None)) |nn| {
                     n = nn;
+                    if (n != 0) {
+                        d.params.src_pos = src_pos;
+                        return n > 0;
+                    }
+
+                    lookahead_size = d.dict.lookahead_size;
+                    lookahead_pos = d.dict.lookahead_pos;
                 } else |err| {
                     d.params.prev_return_status = TDEFLStatus.PutBufFailed;
                     d.params.src_pos = src_pos;
                     return false;
                 }
-                //let n = match flush_block(d, callback, TDEFLFlush.None) {
-                //    Err(_) => {
-                //        d.params.prev_return_status = TDEFLStatus.PutBufFailed;
-                //        d.params.src_pos = src_pos;
-                //        return false;
-                //    }
-                //    Ok(status) => status,
-                //};
-                if (n != 0) {
-                    d.params.src_pos = src_pos;
-                    return n > 0;
-                }
-
-                lookahead_size = d.dict.lookahead_size;
-                lookahead_pos = d.dict.lookahead_pos;
             }
         }
     }
@@ -2341,7 +2341,7 @@ fn compress_fast(d: *Compressor, callback: *Callback)  bool {
 }
 
 fn flush_output_buffer(cb: *Callback, p: *Params) CompressionResult {
-    //warn("flush_output_buffer remaining={}\n", p.flush_remaining);
+    if (debug) warn("flush_output_buffer remaining={}\n", p.flush_remaining);
     var res = CompressionResult.new(TDEFLStatus.Okay, p.src_pos, 0);
     switch (cb.out) {
         CallbackOut.Buf => |ob| {
@@ -2351,7 +2351,7 @@ fn flush_output_buffer(cb: *Callback, p: *Params) CompressionResult {
                     ob.out_buf[p.out_buf_ofs + ii] = b.*;
                 }
             }
-            const nn = truncmask(u32, n);
+            const nn = @truncate(u32, n);
             p.flush_ofs += nn;
             p.flush_remaining -= nn;
             p.out_buf_ofs += nn;
@@ -2359,7 +2359,6 @@ fn flush_output_buffer(cb: *Callback, p: *Params) CompressionResult {
         },
         else => {},
     }
-    //}
 
     if (p.finished and (p.flush_remaining == 0)) {
         res.status = TDEFLStatus.Done;
@@ -2370,7 +2369,7 @@ fn flush_output_buffer(cb: *Callback, p: *Params) CompressionResult {
 
 fn compress_inner(d: *Compressor, callback: *Callback,
                   pflush: TDEFLFlush) CompressionResult {
-    //warn("compress_inner\n");
+    if (debug) warn("compress_inner\n");
     var res: CompressionResult = undefined;
     var flush = pflush;
     d.params.out_buf_ofs = 0;
@@ -2398,7 +2397,6 @@ fn compress_inner(d: *Compressor, callback: *Callback,
                                                     | TDEFL_FORCE_ALL_RAW_BLOCKS
                                                     | TDEFL_RLE_MATCHES)) != 0;
 
-    warn("XXX {} {} {}\n", one_probe, greedy, filter_or_rle_or_raw);
     const compress_success = if (one_probe and greedy and !filter_or_rle_or_raw)
         compress_fast(d, callback) else compress_normal(d, callback);
 
@@ -2412,22 +2410,28 @@ fn compress_inner(d: *Compressor, callback: *Callback,
         }
     }
 
-    callback.dump();
+    //callback.dump();
 
     const flush_none = (d.params.flush == TDEFLFlush.None);
     //const in_left = callback.in_buf.len - d.params.src_pos; //callback.in_buf.map_or(0, |buf| buf.len()) - d.params.src_pos;
     const in_left = if (callback.in_buf) |buf| (buf.len - d.params.src_pos) else 0;
     const remaining = (in_left != 0) or (d.params.flush_remaining != 0);
     if (!flush_none and (d.dict.lookahead_size == 0) and !remaining) {
-        warn("@@@ remaining={}\n", remaining);
         flush = d.params.flush;
         if (flush_block(d, callback, flush)) |n| {
-            warn("@@@ {}\n", n);
+            // given that we get a u32, this will never happen...investigate
             if (n < 0) {
                 res.status = d.params.prev_return_status;
                 res.inpos = d.params.src_pos;
                 res.outpos = d.params.out_buf_ofs;
                 return res;
+            }
+            d.params.finished = d.params.flush == TDEFLFlush.Finish;
+            if (d.params.flush == TDEFLFlush.Full) {
+                if (debug) warn("full flush\n");
+                setmem(@typeOf(d.dict.b.hash[0]), d.dict.b.hash[0..], 0);
+                setmem(@typeOf(d.dict.b.next[0]), d.dict.b.next[0..], 0);
+                d.dict.size = 0;
             }
 
         } else |err| {
@@ -2454,14 +2458,6 @@ fn compress_inner(d: *Compressor, callback: *Callback,
         //         )
         //     }
         //     _ => {
-        warn("akkar\n");
-        d.params.finished = d.params.flush == TDEFLFlush.Finish;
-        if (d.params.flush == TDEFLFlush.Full) {
-            warn("full flush\n");
-            setmem(u16, d.dict.b.hash[0..], 0);
-            setmem(u16, d.dict.b.next[0..], 0);
-            d.dict.size = 0;
-        }
     }
 
     res = flush_output_buffer(callback, &d.params);
@@ -2477,9 +2473,7 @@ fn compress_inner(d: *Compressor, callback: *Callback,
 /// in the input buffer and the current position in the output buffer.
 pub fn compress(d: *Compressor, in_buf: []u8, out_buf: []u8,
                 flush: TDEFLFlush) CompressionResult {
-    //warn("compress\n");
     var callback = Callback.new_callback_buf(in_buf, out_buf);
-    //callback.dump();
     return compress_inner(d, &callback, flush);
 }
 
@@ -2550,22 +2544,18 @@ test "Cursor"  {
 test "Compressor" {
     var c: Compressor = undefined;
     c.initialize(create_comp_flags_from_zip_params(6, 15, 0));
-    var input = "Deflate late";
+    //var input = "Deflate lateDeflate lateDeflate lateDeflate lateDeflate lateDeflate late\n";
+    var input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
-    var output = []u8 {0} ** 2000;
-    // "\xcb\x49\x2c\x49\x55\xc8\x49\x04\x11\xa9\x00\x00\x00"
+    var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
     r.dump();
+    /// for pasting into  Python zlib.decompress(<paste>)
     warn("\"");
-    for (output) |b, i| {
+    for (output[0..r.outpos]) |b, i| {
         warn("\\x{x02}", b);
-        if (i > r.outpos) {
-            break;
-        }
     }
     warn("\"\n");
-    c.dict.dump();
-    warn("done..{}\n", @enumToInt(builtin.mode));
 }
 
 test "Compress File" {
@@ -2573,7 +2563,7 @@ test "Compress File" {
     const io = std.io;
     var raw_bytes: [4 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
-    const tmp_file_name = "input.txt";
+    const tmp_file_name = "lorem.txt";
     var file = try os.File.openRead(allocator, tmp_file_name);
     defer file.close();
 
@@ -2587,20 +2577,16 @@ test "Compress File" {
     warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
     defer allocator.free(contents);
 
-    var input = @embedFile("input.txt");
-
+    var input = @embedFile("lorem.txt");
     warn("{x08} vs {x08}\n", adler32(MZ_ADLER32_INIT, input), adler32(MZ_ADLER32_INIT, contents));
-    //assert(mem.eql(u8, input, contents));
+    assert(mem.eql(u8, input, contents));
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(6, 15, 0));
 
     var output = []u8 {0} ** (2 * 1024);
     var r = compress(&c, input[0..], output[0..], TDEFLFlush.Finish);
     r.dump();
-    for (output) |b, i| {
+    for (output[0..r.outpos]) |b, i| {
         warn("\\x{x02}", b);
-        if (i > r.outpos) {
-            break;
-        }
     }
 }
