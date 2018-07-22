@@ -83,6 +83,7 @@ const BitBuffer = if (is_64bit) u64 else u32;
 //#[cfg(not(target_pointer_width = "64"))]
 //type BitBuffer = u32;
 
+const HUFFMAN_LENGTH_ORDER: [19]u8 = []const u8 {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
 /// Should we try to parse a zlib header?
 pub const TINFL_FLAG_PARSE_ZLIB_HEADER: u32 = 1;
@@ -1359,9 +1360,7 @@ fn decompress_inner(
     }
 
     var in_iter = IterBuf{.buf = in_buf, .pos = 0}; //.iter();
-
     var state = r.state;
-
     var out_buf = OutputBuffer.from_slice_and_pos(out_cur.get_mut(), out_buf_start_pos);
 
     // TODO: Borrow instead of Copy
@@ -1378,7 +1377,7 @@ fn decompress_inner(
         warn("state = {}\n", @enumToInt(state));
         switch (state) {
             State.Start => { // 0
-                var action = while (true) {
+                const action = while (true) {
                     l.bit_buf = 0;
                     l.num_bits = 0;
                     l.dist = 0;
@@ -1403,14 +1402,9 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
-            // ReadZlibCmf => generate_state(state, state_machine, {
-            //     read_byte(&mut in_iter, flags, |cmf| {
-            //         r.z_header0 = cmf as u32;
-            //         return Action::Jump(State::ReadZlibFlg);
-            //     })
-            // }),
+
             State.ReadZlibCmf => { // 1
-                var action = while (true) {
+                const action = while (true) {
                     if (get_byte(&in_iter, flags)) |cmf| {
                         r.z_header0 = u32(cmf);
                         break Action{.Jump = State.ReadZlibFlg};
@@ -1427,15 +1421,9 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
-            // ReadZlibFlg => generate_state!(state, :state_machine, {
-            //     read_byte(&mut in_iter, flags, |flg| {
-            //         r.z_header1 = flg as u32;
-            //         validate_zlib_header(r.z_header0, r.z_header1, flags, out_buf_size_mask)
-            //     })
-            // }),
 
             State.ReadZlibFlg => { // 2
-                var action = while (true) {
+                const action = while (true) {
                     if (get_byte(&in_iter, flags)) |cmf| {
                         r.z_header1 = u32(cmf);
                         break validate_zlib_header(r.z_header0, r.z_header1, flags, out_buf_size_mask);
@@ -1452,31 +1440,13 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
+
             // Read the block header and jump to the relevant section depending on the block type.
-            // ReadBlockHeader => generate_state!(state, :state_machine, {
-            //     read_bits(&mut l, 3, &mut in_iter, flags, |l, bits| {
-            //         r.finish = (bits & 1) as u32;
-            //         r.block_type = (bits >> 1) as u32 & 3;
-            //         match r.block_type {
-            //             0 => Action::Jump(BlockTypeNoCompression),
-            //             1 => {
-            //                 start_static_table(r);
-            //                 init_tree(r, l)
-            //             },
-            //             2 => {
-            //                 l.counter = 0;
-            //                 Action::Jump(ReadTableSizes)
-            //             },
-            //             3 => Action::Jump(BlockTypeUnexpected),
-            //             _ => unreachable!()
-            //         }
-            //     })
-            // }),
             State.ReadBlockHeader => { // 3
                 if (get_bits(&l, 3, &in_iter, flags)) |bits| {
                     r.finish = @truncate(@typeOf(r.finish), (bits & 1));
                     r.block_type = @truncate(@typeOf(r.block_type), bits >> 1) & 3;
-                    var action = while (true) {
+                    const action = while (true) {
                         switch (r.block_type) {
                             0 => break Action{.Jump = State.BlockTypeNoCompression},
                             1 => {
@@ -1602,7 +1572,7 @@ fn decompress_inner(
             //             in_iter.len()),
             //             l.counter as usize
             //         );
-            
+
             //         out_buf.write_slice(&in_iter.as_slice()[..bytes_to_copy]);
 
             //         (&mut in_iter).nth(bytes_to_copy - 1);
@@ -1613,114 +1583,151 @@ fn decompress_inner(
             //     }
             // }),
             State.RawMemcpy2 => unreachable,
-            // // Read how many huffman codes/symbols are used for each table.
-            // ReadTableSizes => generate_state!(state, :state_machine, {
-            //     if l.counter < 3 {
-            //         let num_bits = [5, 5, 4][l.counter as usize];
-            //         read_bits(&mut l, num_bits, &mut in_iter, flags, |l, bits| {
-            //             r.table_sizes[l.counter as usize] =
-            //                 bits as u32 + MIN_TABLE_SIZES[l.counter as usize] as u32;
-            //             l.counter += 1;
-            //             Action::None
-            //         })
-            //     } else {
-            //         memset(&mut r.tables[HUFFLEN_TABLE].code_size[..], 0);
-            //         l.counter = 0;
-            //         Action::Jump(ReadHufflenTableCodeSize)
-            //     }
-            // }),
-            State.ReadTableSizes => unreachable,
-            // // Read the 3-bit lengths of the huffman codes describing the huffman code lengths used
-            // // to decode the lengths of the main tables.
-            // ReadHufflenTableCodeSize => generate_state!(state, :state_machine, {
-            //     if l.counter < r.table_sizes[HUFFLEN_TABLE] {
-            //         read_bits(&mut l, 3, &mut in_iter, flags, |l, bits| {
-            //             // These lengths are not stored in a normal ascending order, but rather one
-            //             // specified by the deflate specification intended to put the most used
-            //             // values at the front as trailing zero lengths do not have to be stored.
-            //             r.tables[HUFFLEN_TABLE]
-            //                 .code_size[HUFFMAN_LENGTH_ORDER[l.counter as usize] as usize] =
-            //                     bits as u8;
-            //             l.counter += 1;
-            //             Action::None
-            //         })
-            //     } else {
-            //         r.table_sizes[HUFFLEN_TABLE] = 19;
-            //         init_tree(r, &mut l)
-            //     }
-            // }),
-            State.ReadHufflenTableCodeSize => unreachable,
-            // ReadLitlenDistTablesCodeSize => generate_state!(state, :state_machine, {
-            //     if l.counter < r.table_sizes[LITLEN_TABLE] + r.table_sizes[DIST_TABLE] {
-            //         decode_huffman_code(
-            //             r, &mut l, HUFFLEN_TABLE,
-            //             flags, &mut in_iter, |r, l, symbol| {
-            //                 l.dist = symbol as u32;
-            //                 if l.dist < 16 {
-            //                     r.len_codes[l.counter as usize] = l.dist as u8;
-            //                     l.counter += 1;
-            //                     Action::None
-            //                 } else if l.dist == 16 and l.counter == 0 {
-            //                     Action::Jump(BadCodeSizeDistPrevLookup)
-            //                 } else {
-            //                     l.num_extra = [2, 3, 7][l.dist as usize - 16];
-            //                     Action::Jump(ReadExtraBitsCodeSize)
-            //                 }
-            //             }
-            //         )
-            //     } else if l.counter != r.table_sizes[LITLEN_TABLE] + r.table_sizes[DIST_TABLE] {
-            //         Action::Jump(BadCodeSizeSum)
-            //     } else {
-            //         r.tables[LITLEN_TABLE].code_size[..r.table_sizes[LITLEN_TABLE] as usize]
-            //             .copy_from_slice(&r.len_codes[..r.table_sizes[LITLEN_TABLE] as usize]);
 
-            //         let dist_table_start = r.table_sizes[LITLEN_TABLE] as usize;
-            //         let dist_table_end = (r.table_sizes[LITLEN_TABLE] +
-            //                               r.table_sizes[DIST_TABLE]) as usize;
-            //         r.tables[DIST_TABLE].code_size[..r.table_sizes[DIST_TABLE] as usize]
-            //             .copy_from_slice(&r.len_codes[dist_table_start..dist_table_end]);
+            // Read how many huffman codes/symbols are used for each table.
+            State.ReadTableSizes => {
+                const action = while (true) {
+                    if (l.counter < 3) {
+                        const num_bits = ([]u32 {5, 5, 4})[l.counter];
+                        if (get_bits(&l, num_bits, &in_iter, flags)) |bits| {
+                            r.table_sizes[l.counter] = @truncate(u32, bits) + MIN_TABLE_SIZES[l.counter];
+                            l.counter += 1;
+                            break Action{.None = {}};
+                        } else {
+                            break :state_machine TINFLStatus.Failed;
+                        }
+                    } else {
+                        setmem(u8, r.tables[HUFFLEN_TABLE].code_size[0..], 0);
+                        l.counter = 0;
+                        break Action{.Jump = State.ReadHufflenTableCodeSize};
+                    }
+                } else Action {.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
-            //         r.block_type -= 1;
-            //         init_tree(r, &mut l)
-            //     }
-            // }),
-            State.ReadLitlenDistTablesCodeSize => unreachable,
-            // ReadExtraBitsCodeSize => generate_state!(state, :state_machine, {
-            //     let num_extra = l.num_extra;
-            //     read_bits(&mut l, num_extra, &mut in_iter, flags, |l, mut extra_bits| {
-            //         // Mask to avoid a bounds check.
-            //         extra_bits += [3, 3, 11][(l.dist as usize - 16) & 3];
-            //         let val = if l.dist == 16 {
-            //             r.len_codes[l.counter as usize - 1]
-            //         } else {
-            //             0
-            //         };
+            // Read the 3-bit lengths of the huffman codes describing the huffman code lengths used
+            // to decode the lengths of the main tables.
+            State.ReadHufflenTableCodeSize => {
+                const action = while (true) {
+                    if (l.counter < r.table_sizes[HUFFLEN_TABLE]) {
+                        if (get_bits(&l, 3, &in_iter, flags)) |bits| {
+                            // These lengths are not stored in a normal ascending order, but rather one
+                            // specified by the deflate specification intended to put the most used
+                            // values at the front as trailing zero lengths do not have to be stored.
+                            r.tables[HUFFLEN_TABLE]
+                                .code_size[HUFFMAN_LENGTH_ORDER[l.counter]]
+                                = @truncate(u8, bits);
+                            l.counter += 1;
+                            break Action{.None = {}};
+                        } else {
+                            break :state_machine TINFLStatus.Failed;
+                        }
+                    } else {
+                        r.table_sizes[HUFFLEN_TABLE] = 19;
+                        break init_tree(r, &l);
+                    }
+                } else Action {.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
-            //         memset(
-            //             &mut r.len_codes[
-            //                 l.counter as usize..l.counter as usize + extra_bits as usize
-            //             ],
-            //             val,
-            //         );
-            //         l.counter += extra_bits as u32;
-            //         Action::Jump(ReadLitlenDistTablesCodeSize)
-            //     })
-            // }),
-            State.ReadExtraBitsCodeSize => unreachable,
+            State.ReadLitlenDistTablesCodeSize => {
+                const action = while (true) {
+                    if (l.counter < (r.table_sizes[LITLEN_TABLE] + r.table_sizes[DIST_TABLE])) {
+                        const aos = decode_huffman_code(r, &l, HUFFLEN_TABLE, flags, &in_iter);
+                        switch (aos) {
+                            ActionOrSymbol.AOSAction => |a| break a,
+                            ActionOrSymbol.AOSSymbol => |s| {
+                                l.dist = @bitCast(u32, s);
+                                if (l.dist < 16) {
+                                    r.len_codes[l.counter] = @truncate(u8, l.dist);
+                                    l.counter += 1;
+                                    break Action{.None = {}};
+                                } else if ((l.dist == 16) and (l.counter == 0)) {
+                                    break Action{.Jump = State.BadCodeSizeDistPrevLookup};
+                                } else {
+                                    l.num_extra = ([]u32{2, 3, 7})[l.dist - 16];
+                                    break Action{.Jump = State.ReadExtraBitsCodeSize};
+                                }
+                            },
+                            else => unreachable,
+                        }
+                    } else if (l.counter != (r.table_sizes[LITLEN_TABLE] + r.table_sizes[DIST_TABLE])) {
+                        break Action{.Jump = State.BadCodeSizeSum};
+                    } else {
+                        //           r.tables[LITLEN_TABLE].code_size[..r.table_sizes[LITLEN_TABLE] as usize]
+                        //             .copy_from_slice(&r.len_codes[..r.table_sizes[LITLEN_TABLE] as usize]);
+                        for (r.len_codes[0..r.table_sizes[LITLEN_TABLE]]) |v, ii| {
+                            r.tables[LITLEN_TABLE].code_size[ii] = v;
+                        }
+
+                        const dist_table_start = r.table_sizes[LITLEN_TABLE];
+                        const dist_table_end = (r.table_sizes[LITLEN_TABLE] + r.table_sizes[DIST_TABLE]);
+                        //         r.tables[DIST_TABLE].code_size[..r.table_sizes[DIST_TABLE] as usize]
+                        //             .copy_from_slice(&r.len_codes[dist_table_start..dist_table_end]);
+                        for (r.len_codes[dist_table_start..dist_table_end]) |v, ii| {
+                            r.tables[DIST_TABLE].code_size[ii] = v;
+                        }
+                        r.block_type -= 1;
+                        break init_tree(r, &l);
+                    }
+                } else Action {.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
+
+            State.ReadExtraBitsCodeSize => {
+                const action = while (true) {
+                    const num_extra = l.num_extra;
+                    if (get_bits(&l, num_extra, &in_iter, flags)) |bits| {
+                        var extra_bits = @truncate(u32, bits);
+                        // Mask to avoid a bounds check.
+                        extra_bits += ([]u32{3, 3, 11})[(l.dist - 16) & 3];
+                        const val = if (l.dist == 16) r.len_codes[l.counter - 1] else 0;
+                        setmem(@typeOf(r.len_codes[0]), r.len_codes[l.counter..l.counter + extra_bits], val);
+                        l.counter += extra_bits;
+                        break Action{.Jump = State.ReadLitlenDistTablesCodeSize};
+                    } else {
+                        break :state_machine TINFLStatus.Failed;
+                    }
+                } else Action {.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
             State.DecodeLitlen => { // 12
                 // DecodeLitlen => generate_state!(state, :state_machine, {
                 warn("in={}, out={}\n", in_iter.len(), out_buf.bytes_left());
-                var action = while (true) {
+                const action = while (true) {
                     if ((in_iter.len() < 4) or (out_buf.bytes_left() < 2)) {
                         warn("case 1\n");
                         // See if we can decode a literal with the data we have left.
                         // Jumps to next state (WriteSymbol) if successful.
-                        const symbol = decode_huffman_code(
-                            r,
-                            &l,
-                            LITLEN_TABLE,
-                            flags,
-                            &in_iter);
+                        const symbol = decode_huffman_code(r, &l, LITLEN_TABLE, flags, &in_iter);
                         symbol.dump();
                         switch (symbol) {
                             ActionOrSymbol.AOSAction => |a| break a,
@@ -1804,18 +1811,9 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
-            // WriteSymbol => generate_state!(state, :state_machine, {
-            //     if l.counter >= 256 {
-            //         Action::Jump(HuffDecodeOuterLoop1)
-            //     } else if out_buf.bytes_left() > 0 {
-            //         out_buf.write_byte(l.counter as u8);
-            //         Action::Jump(DecodeLitlen)
-            //     } else {
-            //         Action::End(TINFLStatus::HasMoreOutput)
-            //     }
-            // }),
+
             State.WriteSymbol => { // 13
-                var action = while (true) {
+                const action = while (true) {
                     if (l.counter >= 256) {
                         break Action{.Jump = State.HuffDecodeOuterLoop1};
                     } else if (out_buf.bytes_left() > 0) {
@@ -1834,35 +1832,9 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
-            // HuffDecodeOuterLoop1 => generate_state!(state, :state_machine, {
-            //     // Mask the top bits since they may contain length info.
-            //     l.counter &= 511;
 
-            //     if l.counter == 256 {
-            //         // We hit the end of block symbol.
-            //         Action::Jump(BlockDone)
-            //     } else if l.counter > 285 {
-            //         // Invalid code.
-            //         // We already verified earlier that the code is > 256.
-            //         Action::Jump(InvalidLitlen)
-            //     } else {
-            //         // # Optimization
-            //         // Mask the value to avoid bounds checks
-            //         // We could use get_unchecked later if can statically verify that
-            //         // this will never go out of bounds.
-            //         l.num_extra = LENGTH_EXTRA[(l.counter - 257) as usize & BASE_EXTRA_MASK] as u32;
-            //         l.counter = LENGTH_BASE[(l.counter - 257) as usize & BASE_EXTRA_MASK] as u32;
-            //         // Length and distance codes have a number of extra bits depending on
-            //         // the base, which together with the base gives us the exact value.
-            //         if l.num_extra != 0 {
-            //             Action::Jump(ReadExtraBitsLitlen)
-            //         } else {
-            //             Action::Jump(DecodeDistance)
-            //         }
-            //     }
-            // }),
             State.HuffDecodeOuterLoop1 => {
-                var action = while (true) {
+                const action = while (true) {
                     l.counter &= 511;
                     if (l.counter == 256) {
                         // We hit the end of block symbol.
@@ -1897,37 +1869,26 @@ fn decompress_inner(
                 }
             },
 
-            // ReadExtraBitsLitlen => generate_state!(state, :state_machine, {
-            //     let num_extra = l.num_extra;
-            //     read_bits(&mut l, num_extra, &mut in_iter, flags, |l, extra_bits| {
-            //         l.counter += extra_bits as u32;
-            //         Action::Jump(DecodeDistance)
-            //     })
-            // }),
-            State.ReadExtraBitsLitlen => unreachable,
+            State.ReadExtraBitsLitlen => {
+                const action = while (true) {
+                    const num_extra = l.num_extra;
+                    if (get_bits(&l, num_extra, &in_iter, flags)) |bits| {
+                        l.counter += @truncate(u32, bits);
+                        break Action{.Jump = State.DecodeDistance};
+                    } else {
+                        break :state_machine TINFLStatus.Failed;
+                    }
+                } else Action.None;
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
-            // DecodeDistance => generate_state!(state, :state_machine, {
-            //     // Try to read a huffman code from the input buffer and look up what
-            //     // length code the decoded symbol refers to.
-            //     decode_huffman_code(r, &mut l, DIST_TABLE, flags, &mut in_iter, |_r, l, symbol| {
-            //         if symbol > 29 {
-            //             // Invalid distance code.
-            //             return Action::Jump(InvalidDist)
-            //         }
-            //         // # Optimization
-            //         // Mask the value to avoid bounds checks
-            //         // We could use get_unchecked later if can statically verify that
-            //         // this will never go out of bounds.
-            //         l.num_extra = DIST_EXTRA[symbol as usize & BASE_EXTRA_MASK] as u32;
-            //         l.dist = DIST_BASE[symbol as usize & BASE_EXTRA_MASK] as u32;
-            //         if l.num_extra != 0 {
-            //             // ReadEXTRA_BITS_DISTACNE
-            //             Action::Jump(ReadExtraBitsDistance)
-            //         } else {
-            //             Action::Jump(HuffDecodeOuterLoop2)
-            //         }
-            //     })
-            // }),
             State.DecodeDistance => {
                 const action = while (true) {
                     // Try to read a huffman code from the input buffer and look up what
@@ -1967,13 +1928,6 @@ fn decompress_inner(
                 }
             },
 
-            // ReadExtraBitsDistance => generate_state!(state, :state_machine, {
-            //     let num_extra = l.num_extra;
-            //     read_bits(&mut l, num_extra, &mut in_iter, flags, |l, extra_bits| {
-            //         l.dist += extra_bits as u32;
-            //         Action::Jump(HuffDecodeOuterLoop2)
-            //     })
-            // }),
             State.ReadExtraBitsDistance => {
                 l.dump();
                 const action = while (true) {
@@ -1995,47 +1949,6 @@ fn decompress_inner(
                 }
             },
 
-            // HuffDecodeOuterLoop2 => generate_state!(state, :state_machine, {
-            //     l.dist_from_out_buf_start = out_buf.position();
-            //     if l.dist as usize > l.dist_from_out_buf_start and
-            //         (flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF != 0)
-            //     {
-            //         // We encountered a distance that refers a position before
-            //         // the start of the decoded data, so we can't continue.
-            //         Action::Jump(DistanceOutOfBounds)
-            //     } else {
-            //         let mut out_pos = out_buf.position();
-            //         let mut source_pos = l.dist_from_out_buf_start
-            //             .wrapping_sub(l.dist as usize) & out_buf_size_mask;
-
-            //         let out_len = out_buf.get_ref().len() as usize;
-            //         let match_end_pos = out_buf.position() + l.counter as usize;
-
-            //         if match_end_pos > out_len or
-            //             // miniz doesn't do this check here. Not sure how it makes sure
-            //             // that this case doesn't happen.
-            //             (source_pos >= out_pos and (source_pos - out_pos) < l.counter as usize)
-            //         {
-            //             // Not enough space for all of the data in the output buffer,
-            //             // so copy what we have space for.
-            //             if l.counter == 0 {
-            //                 Action::Jump(DecodeLitlen)
-            //             } else {
-            //                 Action::Jump(WriteLenBytesToEnd)
-            //             }
-            //         } else {
-            //             apply_match(
-            //                 out_buf.get_mut(),
-            //                 out_pos,
-            //                 l.dist as usize,
-            //                 l.counter as usize,
-            //                 out_buf_size_mask
-            //             );
-            //             out_buf.set_position(out_pos + l.counter as usize);
-            //             Action::Jump(DecodeLitlen)
-            //         }
-            //     }
-            // }),
             State.HuffDecodeOuterLoop2 => { // 22
                 const action = while (true) {
                     l.dist_from_out_buf_start = out_buf.position();
@@ -2110,28 +2023,6 @@ fn decompress_inner(
             //     }
             // }),
             State.WriteLenBytesToEnd => unreachable,
-            // BlockDone => generate_state!(state, :state_machine, {
-            //     // End once we've read the last block.
-            //     if r.finish != 0 {
-            //         pad_to_bytes(&mut l, &mut in_iter, flags, |_| Action::None);
-
-            //         let in_consumed = in_buf.len() - in_iter.len();
-            //         let undo = undo_bytes(&mut l, in_consumed as u32) as usize;
-            //         in_iter = in_buf[in_consumed - undo..].iter();
-
-            //         l.bit_buf &= (((1 as BitBuffer) << l.num_bits) - 1) as BitBuffer;
-            //         debug_assert_eq!(l.num_bits, 0);
-
-            //         if flags & TINFL_FLAG_PARSE_ZLIB_HEADER != 0 {
-            //             l.counter = 0;
-            //             Action::Jump(ReadAdler32)
-            //         } else {
-            //             Action::Jump(DoneForever)
-            //         }
-            //     } else {
-            //         Action::Jump(ReadBlockHeader)
-            //     }
-            // }),
             State.BlockDone => { // 20
                 const action = while (true) {
                     // End once we've read the last block.
@@ -2166,27 +2057,6 @@ fn decompress_inner(
                     Action.End => |result| break :state_machine result,
                 }
             },
-            // ReadAdler32 => generate_state!(state, :state_machine, {
-            //     if l.counter < 4 {
-            //         if l.num_bits != 0 {
-            //             read_bits(&mut l, 8, &mut in_iter, flags, |l, bits| {
-            //                 r.z_adler32 <<= 8;
-            //                 r.z_adler32 |= bits as u32;
-            //                 l.counter += 1;
-            //                 Action::None
-            //             })
-            //         } else {
-            //             read_byte(&mut in_iter, flags, |byte| {
-            //                 r.z_adler32 <<= 8;
-            //                 r.z_adler32 |= byte as u32;
-            //                 l.counter += 1;
-            //                 Action::None
-            //             })
-            //         }
-            //     } else {
-            //         Action::Jump(DoneForever)
-            //     }
-            // }),
             State.ReadAdler32 => {
                 const action = while (true) {
                     l.dump();
@@ -2279,17 +2149,53 @@ test "Decompress.dummy" {
     assert(false == false);
 }
 
-test "Decompress.decompressor.new" {
+test "Decompress.decompressor.one" {
     var d = Decompressor.new();
     var input = "\x78\x01\x73\x49\x4d\xcb\x49\x2c\x49\x55\x00\x11\x5c\x00\x21\x33\x04\x86";
     var expected = "Deflate late\n";
     var output = []u8 {0} ** 1024;
     var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
-    c.dump();
     var res = decompress(&d, input[0..], &c, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
     res.dump();
-    // right we fail the adler checksum
-    if (res.outpos < 64) {
+    if (res.outpos < 128) {
+        warn("\n\n**  output='{}'\n", output[0..res.outpos]);
+        if (mem.eql(u8, expected, output[0..res.outpos])) {
+            warn("WHAT? Result is as expected\n");
+        }
+    }
+    if (res.status == TINFLStatus.Done and res.outpos > 0) {
+        assert(mem.eql(u8, expected, output[0..res.outpos]));
+    }
+}
+
+test "Decompress.decompressor.two" {
+    var d = Decompressor.new();
+    var input = "\x78\x01\xa5\xc7\xa1\x0d\x00\x00\x08\x03\x30\xcf\x15\x1c\xb3\x47\x10\x43\x21\x91\x1c\x4f\x76\xc3\x4c\x93\x82\x3d\xb5\x4c\x71\x30\x13\x0f\x91\xcd\x1d\x59";
+    var expected = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
+    var output = []u8 {0} ** 1024;
+    var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
+    var res = decompress(&d, input[0..], &c, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    res.dump();
+    if (res.outpos < 128) {
+        warn("\n\n**  output='{}'\n", output[0..res.outpos]);
+        if (mem.eql(u8, expected, output[0..res.outpos])) {
+            warn("WHAT? Result is as expected\n");
+        }
+    }
+    if (res.status == TINFLStatus.Done and res.outpos > 0) {
+        assert(mem.eql(u8, expected, output[0..res.outpos]));
+    }
+}
+
+test "Decompress.decompressor.dynamic" {
+    var d = Decompressor.new();
+    var input = "\x78\x01\xa5\xc7\xa1\x0d\x00\x00\x08\x03\x30\xcf\x15\x1c\xb3\x47\x10\x43\x21\x91\x1c\x4f\x76\xc3\x4c\x93\x82\x3d\xb5\x4c\x71\x30\x13\x0f\x91\xcd\x1d\x59";
+    var expected = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
+    var output = []u8 {0} ** 1024;
+    var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
+    var res = decompress(&d, input[0..], &c, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    res.dump();
+    if (res.outpos < 128) {
         warn("\n\n**  output='{}'\n", output[0..res.outpos]);
         if (mem.eql(u8, expected, output[0..res.outpos])) {
             warn("WHAT? Result is as expected\n");
