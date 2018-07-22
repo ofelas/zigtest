@@ -2,11 +2,13 @@
 const warn = @import("std").debug.warn;
 const assert = @import("std").debug.assert;
 
+// See also https://github.com/tiehuis/zig-deflate for a more ziggish implementation.
+
 // puff.c
 // Copyright (C) 2002-2013 Mark Adler
 // For conditions of distribution and use, see copyright notice in puff.h
 // version 2.3, 21 Jan 2013
-// 
+//
 // puff.c is a simple inflate written to be an unambiguous way to specify the
 // deflate format.  It is not written for speed but rather simplicity.  As a
 // side benefit, this code might actually be useful when small code is more
@@ -16,18 +18,18 @@ const assert = @import("std").debug.assert;
 // around 4K on my machine (a PowerPC using GNU cc).  If the faster decode()
 // function here is used, then puff() is only twice as slow as zlib's
 // inflate().
-// 
+//
 // All dynamically allocated memory comes from the stack.  The stack required
  // is less than 2K bytes.  This code is compatible with 16-bit int's and
 // assumes that long's are at least 32 bits.  puff.c uses the short data blktype,
 // assumed to be 16 bits, for arrays in order to conserve memory.  The code
 // works whether integers are stored big endian or little endian.
-// 
+//
 // In the comments below are "Format notes" that describe the inflate process
 // and document some of the less obvious aspects of the format.  This source
 // code is meant to supplement RFC 1951, which formally describes the deflate
 // format:
-// 
+//
 //    http://www.zlib.org/rfc-deflate.html
 
 const PuffError = error {
@@ -38,8 +40,8 @@ const PuffError = error {
     IncompleteCode,
 };
 
-// * Maximums for allocations and loops.  It is not useful to change these --
-// * they are fixed by the deflate format.
+// Maximums for allocations and loops.  It is not useful to change these --
+// they are fixed by the deflate format.
 const MAXBITS = 15;              // maximum bits in a code
 const MAXLCODES = 286;           // maximum number of literal/length codes
 const MAXDCODES = 30;            // maximum number of distance codes
@@ -71,8 +73,8 @@ const state = struct {
     //   significant bit.  Therefore bits are dropped from the bottom of the bit
     //   buffer, using shift right, and new bytes are appended to the top of the
     //   bit buffer, using shift left.
-    fn bits(s: *state, need: u5) !u32 {
-        assert(need <= 20);
+    fn bits(s: *state, need: u4) !u16 {
+        assert(need <= 15);
         // load at least need bits into val
         var val: u32 = s.*.bitbuf; // bit accumulator (can use up to 20 bits)
         while (s.*.bitcnt < need) {
@@ -89,7 +91,7 @@ const state = struct {
         s.bitcnt -= need;
 
         // return need bits, zeroing the bits above that
-        return u32(val & ((u32(1) << need) - 1));
+        return @truncate(u16, val & ((u16(1) << need) - 1));
     }
 
     // Decode a code from the stream s using huffman table h.  Return the symbol or
@@ -134,7 +136,7 @@ const state = struct {
             len += 1;
         }
 
-    return error.OutOfCodes;    // ran out of codes
+        return error.OutOfCodes;    // ran out of codes
     }
 
     // Process a stored block.
@@ -154,7 +156,7 @@ const state = struct {
     //   subsets of the compressed data for random access or partial recovery.
     fn stored(s: *state) !u32 {
         var len: usize = 0;       // length of stored block
-        
+
         // discard leftover bits from current byte (assumes s->bitcnt < 8)
         s.bitbuf = 0;
         s.bitcnt = 0;
@@ -205,8 +207,8 @@ const state = struct {
 // entries is the sum of the counts in count[].  The decoding process can be
 // seen in the function decode() below.
 const huffman = struct {
-    count: [*]u16,       // number of symbols of each length
-    symbol: [*]u16,      // canonically ordered symbols
+    count: []u16,       // number of symbols of each length
+    symbol: []u16,      // canonically ordered symbols
 };
 
 
@@ -238,7 +240,7 @@ fn fdecode(s: *state, h: *huffman) !u32 {
             bitbuf >>= 1;
             const count = h.*.count[next];
             next += 1;
-            if (code - count < first) { // if length len, return symbol 
+            if (code - count < first) { // if length len, return symbol
                 s.*.bitbuf = bitbuf;
                 s.*.bitcnt = u5(s.*.bitcnt - len) & 7;
                 return u32(h.*.symbol[index + (code - first)]);
@@ -297,37 +299,32 @@ fn fdecode(s: *state, h: *huffman) !u32 {
 //
 // - Within a given code length, the symbols are kept in ascending order for
 //   the code bits definition.
-fn construct(h: *huffman, length: []u16, n: usize) !u32 {
+fn construct(h: *huffman, lengths: []const u16) i32 {
     var symbol: usize = 0; // current symbol when stepping through length[]
-    var len: usize = 0; // current length when stepping through h->count[]
-    var left: i32 = 0; // number of possible codes left of current length
+    var left: i32 = -1; // number of possible codes left of current length
     var offs = []u16 {0} ** (MAXBITS + 1); // offsets in symbol table for each length
 
-    assert(length.len >= n);
     // count number of codes of each length
-    symbol = 0;
-    while (symbol < n) : (symbol += 1) {
-        h.*.count[length[symbol]] += 1; // assumes lengths are within bounds
+    for (lengths) |sym| {
+        h.*.count[sym] += 1;
     }
-    if (h.*.count[0] == n) {    // no codes!
-        return 0;               // complete, but decode() will fail
+    if (h.*.count[0] == lengths.len) {
+        return left;
     }
-
     // check for an over-subscribed or incomplete set of lengths
     left = 1;                   // one possible code of zero length
-    len = 1;
-    while (len <= MAXBITS) : (len += 1) {
-        left <<= 1;             // one more bit, double codes left
-        left -= i32(h.*.count[len]); // deduct count from possible codes
+    for (h.*.count[1..MAXBITS+1]) |len| {
+        left <<= 1;
+        left -= @bitCast(i32, (u32(len)));
         if (left < 0) {
-            warn("left={}\n", left);
-            return error.OverSubscribed; // over-subscribed--return negative
+            warn("left={}, len={}\n", left, len);
+            return left;
         }
-    }                           // left > 0 means incomplete
-              
+    }
+
     // generate offsets into symbol table for each length for sorting
     offs[1] = 0;
-    len = 1;
+    var len: usize = 1;
     while (len < MAXBITS) : (len += 1) {
         offs[len + 1] = offs[len] + h.*.count[len];
     }
@@ -335,14 +332,14 @@ fn construct(h: *huffman, length: []u16, n: usize) !u32 {
     // put symbols in table sorted by length, by symbol order within
     // each length
     symbol = 0;
-    while (symbol < n) : (symbol += 1) {
-        if (length[symbol] != 0) {
-            h.*.symbol[offs[length[symbol]]] = @intCast(u16, symbol & @maxValue(u16));
-            offs[length[symbol]] += 1;
+    while (symbol < lengths.len) : (symbol += 1) {
+        if (lengths[symbol] != 0) {
+            h.*.symbol[offs[lengths[symbol]]] = @intCast(u16, symbol & @maxValue(u16));
+            offs[lengths[symbol]] += 1;
         }
     }
     // return zero for complete set, positive for incomplete set
-    return @intCast(u32, left);
+    return left;
 }
 
 // Decode literal/length and distance codes until an end-of-block code.
@@ -403,17 +400,17 @@ fn codes(s: *state, plencode: *huffman, pdistcode: *huffman) !u32 {
     var symbol: u32 = 0;         // decoded symbol
     var len: u32 = 0;            // length for copy
     var distance: u32 = 0;           // distance for copy
-    const lens = [29]u16 { // Size base for length codes 257..285
+    const lens: [29]u16 = []const u16 { // Size base for length codes 257..285
         3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
         35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-    const lext = [29]u5 { // Extra bits for length codes 257..285
+    const lext: [29]u4 = []const u4 { // Extra bits for length codes 257..285
         0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
         3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-    const dists = [30]u16 { // Offset base for distance codes 0..29
+    const dists: [30]u16 = []const u16 { // Offset base for distance codes 0..29
         1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
         257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
         8193, 12289, 16385, 24577};
-    const dext = [30]u5 { // Extra bits for distance codes 0..29
+    const dext: [30]u4 = []const u4 { // Extra bits for distance codes 0..29
         0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
         7, 7, 8, 8, 9, 9, 10, 10, 11, 11,
         12, 12, 13, 13};
@@ -511,7 +508,7 @@ var distsym: [MAXDCODES]u16 = undefined;
 
 var lencode: huffman = undefined;
 var distcode: huffman = undefined;
-fn fixed(s: *state) !void {
+fn fixed(s: *state) !u32 {
     // build fixed huffman tables if first call (may not be thread safe)
     // candidate for comptime?!?
     if (virgin) {
@@ -541,13 +538,13 @@ fn fixed(s: *state) !void {
             break :block ct_table;
         };
 
-        // construct lencode and distcode 
+        // construct lencode and distcode
         lencode.count = &lencnt;
         lencode.symbol = &lensym;
         distcode.count = &distcnt;
         distcode.symbol = &distsym;
 
-        var left = construct(&lencode, lengths[0..], FIXLCODES);
+        var left = construct(&lencode, lengths[0..FIXLCODES]);
         //warn("left={}\n", left);
 
         // distance table
@@ -556,7 +553,7 @@ fn fixed(s: *state) !void {
             lengths[symbol] = 5;
             symbol += 1;
         }
-        left = construct(&distcode, lengths[0..], MAXDCODES);
+        left = construct(&distcode, lengths[0..MAXDCODES]);
         //warn("left={}\n", left);
 
         // do this just once
@@ -564,8 +561,7 @@ fn fixed(s: *state) !void {
     }
 
     // decode data until end-of-block code
-    _ = try codes(s, &lencode, &distcode);
-    return ;
+    return codes(s, &lencode, &distcode);
 }
 
 // Process a dynamic codes block.
@@ -656,62 +652,57 @@ fn fixed(s: *state) !void {
 
 fn dynamic(s: *state) !u32 {
     //int nlen, ndist, ncode;             // number of lengths in descriptor
-    var nlen: usize = 0;
-    var ndist: usize = 0;
-    var ncode: usize = 0;
     var index: usize = 0;                          // index of lengths[]
-    var err: u32 = 0;                            // construct() return value
+    var err: i32 = 0;                            // construct() return value
     var lengths: [MAXCODES]u16 = undefined;            // descriptor code lengths
     // dlencode memory
     var dlencnt: [MAXBITS+1]u16 = undefined;
     var dlensym: [MAXLCODES]u16 = undefined;
     // ddistcode memory
     var ddistcnt: [MAXBITS+1]u16 = undefined;
-    var ddistsym: [MAXDCODES]u16 = undefined;       
+    var ddistsym: [MAXDCODES]u16 = undefined;
     var dlencode: huffman = undefined;   // length and distance codes
     var ddistcode: huffman = undefined;
-    var order = [19] u16 // permutation of code length codes
-    {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+    /// permutation of code length codes
+    const order: [19]u16 = []const u16 {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
     warn("dynamic\n");
     // construct dlencode and ddistcode
-    dlencode.count = &dlencnt;
-    dlencode.symbol = &dlensym;
-    ddistcode.count = &ddistcnt;
-    ddistcode.symbol = &ddistsym;
+    dlencode.count = dlencnt[0..];
+    dlencode.symbol = dlensym[0..];
+    ddistcode.count = ddistcnt[0..];
+    ddistcode.symbol = ddistsym[0..];
 
     // get number of lengths in each table, check lengths
-    nlen = 257 + try s.bits(5);
-    ndist = 1 + try s.bits(5);
-    ncode = 4 + try s.bits(4);
+    const nlen = (try s.bits(5))  + 257;
+    const ndist = (try s.bits(5)) +   1;
+    const ncode = (try s.bits(4)) +   4;
     if ((nlen > MAXLCODES) or (ndist > MAXDCODES)) {
         return error.BadCounts;                      // bad counts
     }
-
+    warn("nlen={}, ndist={}, ncode={}\n", nlen, ndist, ncode);
     // read code length code lengths (really), missing lengths are zero
     index = 0;
-    while (index < ncode) {
-        lengths[order[index]] = @intCast(u16, try s.bits(3));
-        index += 1;
+    while (index < ncode) : (index += 1) {
+        lengths[order[index]] = @truncate(u16, try s.bits(3));
     }
-    while (index < 19) {
+    while (index < 19) : (index += 1) {
         lengths[order[index]] = 0;
-        index += 1;
     }
 
     // build huffman table for code lengths codes (use dlencode temporarily)
-    err = try construct(&dlencode, lengths[0..], 19);
-    if (err != 0) {              // require complete code set here
+    err = construct(&dlencode, lengths[0..19]);
+    if (err < 0) {              // require complete code set here
+        warn("err={}\n", err);
         return error.IncompleteCodeSet;
     }
 
     // read length/literal and distance code length tables
     index = 0;
+    var len: u16 = 0;                // last length to repeat
     while (index < (nlen + ndist)) {
-        var symbol: u32 = 0;             // decoded value
-        var len: u32 = 0;                // last length to repeat
 
-        symbol = try s.decode(&dlencode);
+        var symbol = try s.decode(&dlencode);
         if (symbol < 0) {
             return symbol;          // invalid symbol
         }
@@ -734,10 +725,11 @@ fn dynamic(s: *state) !u32 {
             if (index + symbol > nlen + ndist) {
                 return error.TooManyLengths;              // too many lengths!
             }
-            while (symbol > 0) {            // repeat last or zero symbol times
-                lengths[index] = @intCast(u16, len);
+            warn("symbol={}\n", symbol);
+            var j: u32 = 0;
+            while (j < symbol) : (j += 1) {            // repeat last or zero symbol times
+                lengths[index] = len;
                 index += 1;
-                symbol -= 1;
             }
         }
     }
@@ -748,13 +740,13 @@ fn dynamic(s: *state) !u32 {
     }
 
     // build huffman table for literal/length codes
-    err = try construct(&dlencode, lengths[0..], nlen);
+    err = construct(&dlencode, lengths[0..nlen]);
     if ((err < 0) or (nlen != (dlencode.count[0] + dlencode.count[1]))) {
         return error.IncompleteCode;      // incomplete code ok only for single length 1 code
     }
 
     // build huffman table for distance codes
-    err = try construct(&ddistcode, lengths[nlen..], ndist);
+    err = construct(&ddistcode, lengths[nlen..nlen + ndist]);
     if ((err < 0) or (ndist != (ddistcode.count[0] + ddistcode.count[1]))) {
         return error.IncompleteCode;      // incomplete code ok only for single length 1 code
     }
@@ -811,9 +803,8 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
             source: []const u8,   // pointer to source data pointer
             sourcelen: *usize) !u32 {     // amount of input available
     var s: state = undefined;             // input/output state
-    var last: u32 = 0;
     var blktype: u32 = 0;          // block information
-    var err: u32 = 0;                    // return value
+    var err: error!u32 = 0;                    // return value
 
     // initialize output state
     s.outbuf = dest;
@@ -834,37 +825,32 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
     {
         // process blocks until last block or error
         while (true) {
-            last = try s.bits(1);    // one if last block
+            const last = (try s.bits(1)) != 0; // one if last block
             blktype = try s.bits(2); // block blktype 0..3
             warn("*** last={x}, blktype={x}, bitcnt={}, bitbuf={x}, outlen={}, outcnt={}\n", last, blktype, s.bitcnt, s.bitbuf, s.outlen, s.outcnt);
             //err = blktype == 0 ? stored(&s) : (blktype == 1 ? fixed(&s) : (blktype == 2 ? dynamic(&s) : -1));       // blktype == 3, invalid
-            if (blktype == 0) {
-                err = try s.stored();
-            } else if (blktype == 1) {
-                try fixed(&s);
-            } else if (blktype == 2) {
-                err = try dynamic(&s);
-            } else {
-                return error.InvalidBlockType;
-            }
-        
-            if (err != 0) {
-                warn("err={}\n", err);
-                break;                  // return with error
-            }
-            if (last != 0) {
-                warn("last={}\n", last);
+            err = switch (blktype) {
+                0 => try s.stored(),
+                1 => try fixed(&s),
+                2 => try dynamic(&s),
+                else => error.InvalidBlockType,
+            };
+            if (last) {
                 break;
             }
         } // while (!last);
     }
 
     // update the lengths and return
-    if (err <= 0) {
-        destlen.* = s.outcnt;
-        sourcelen.* = s.incnt;
+    if (err) |e| {
+        if (e <= 0) {
+            destlen.* = s.outcnt;
+            sourcelen.* = s.incnt;
+        }
+        return e;
+    } else |e| {
+        return e;
     }
-    return err;
 }
 
 test "puff function" {
@@ -879,6 +865,9 @@ test "puff function" {
                .output = "ababababababababababababababababababababababababababa"},
         ZTEST {.input = "30426153\xb7\xb04\x80\xb3\x00*\x80\x04\x1b",
                .output = "01234567890123456789" },
+        // fails
+        ZTEST {.input = "\x73\x49\x4d\xcb\x49\x2c\x49\x55\x00\x11\x5c\x00\x21\x33\x04\x86",
+               .output = "Deflate late\n"},
     };
 
     for (pufftests) |t| {
