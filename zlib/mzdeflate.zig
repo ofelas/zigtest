@@ -2426,22 +2426,21 @@ test "Compress.dynamic" {
         warn("\\x{x02}", b);
     }
     warn("\"\n");
-    if (false) {
-        // puff.zig fails here so does tiehuis.deflate (renamed
-        // inflate and modified to compile here since I had a file
-        // with that name and it seems to do inflate not deflate!?!)
-        // Python zlib.decompress() return the uncompressed data ok.
-        const hash = std.hash;
-        var raw_bytes: [4 * 1024]u8 = undefined;
-        var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
-        const inflate = @import("inflate.zig");
-        const p = try inflate.decompressAlloc(allocator, output[2..r.outpos - 4], hash.Adler32);
-        //warn("p={}, outlen={}\n", p, outlen);
-        //assert(input.len == outlen);
-        //assert(mem.eql(u8, out[0..outlen], input));
-    } else {
-        //assert(mem.eql(u8, input, output[0..r.outpos]));
-    }
+        if (true) {
+            // wow, working roundtrip...
+            const mzinflate =  @import("mzinflate.zig");
+            const Decompressor = mzinflate.Decompressor;
+            const decompress = mzinflate.decompress;
+            const TINFL_FLAG_PARSE_ZLIB_HEADER = mzinflate.TINFL_FLAG_PARSE_ZLIB_HEADER;
+            const TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF = mzinflate.TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+            var d = Decompressor.new();
+            var out = []u8 {0} ** (8 * 1024);
+            var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
+            var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+            res.dump();
+            assert(mem.eql(u8, out[0..res.outpos], input));
+        }
+
 }
 
 test "Compress.File.Fast" {
@@ -2467,7 +2466,7 @@ test "Compress.File.Fast" {
     var c: Compressor = undefined;
     c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
 
-    var output = []u8 {0} ** (6 * 1024);
+    var output = []u8 {0} ** (8 * 1024);
     var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
     r.dump();
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
@@ -2477,10 +2476,19 @@ test "Compress.File.Fast" {
             warn("\\x{x02}", b);
         }
         warn("\n");
-        if (false) {
-            const hash = std.hash;
-            const inflate = @import("inflate.zig");
-            const p = try inflate.decompressAlloc(allocator, output[2..r.outpos], hash.Adler32);
+        if (true) {
+            // wow, working roundtrip...
+            const mzinflate =  @import("mzinflate.zig");
+            const Decompressor = mzinflate.Decompressor;
+            const decompress = mzinflate.decompress;
+            const TINFL_FLAG_PARSE_ZLIB_HEADER = mzinflate.TINFL_FLAG_PARSE_ZLIB_HEADER;
+            const TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF = mzinflate.TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+            var d = Decompressor.new();
+            var out = []u8 {0} ** (8 * 1024);
+            var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
+            var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+            res.dump();
+            assert(mem.eql(u8, out[0..res.outpos], contents));
         }
 
     } else {
@@ -2520,13 +2528,21 @@ test "Compress.File.Dynamic" {
             warn("\\x{x02}", b);
         }
         warn("\n");
-        if (false) {
-            const hash = std.hash;
-            const inflate = @import("inflate.zig");
-            const p = try inflate.decompressAlloc(allocator, output[2..r.outpos], hash.Adler32);
-            assert(mem.eql(u8, p.toSliceConst(), contents));
-
+        if (true) {
+            // wow, working roundtrip...
+            const mzinflate =  @import("mzinflate.zig");
+            const Decompressor = mzinflate.Decompressor;
+            const decompress = mzinflate.decompress;
+            const TINFL_FLAG_PARSE_ZLIB_HEADER = mzinflate.TINFL_FLAG_PARSE_ZLIB_HEADER;
+            const TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF = mzinflate.TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+            var d = Decompressor.new();
+            var out = []u8 {0} ** (8 * 1024);
+            var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
+            var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+            res.dump();
+            assert(mem.eql(u8, out[0..res.outpos], contents));
         }
+
     }
 }
 

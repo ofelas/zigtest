@@ -49,14 +49,7 @@ pub const TINFLStatus = extern enum {
 // From https://github.com/Frommi/miniz_oxide
 //! Streaming decompression functionality.
 
-//use super::*;
-//use shared::{HUFFMAN_LENGTH_ORDER, update_adler32};
-
-//use std::{cmp, ptr, slice};
-
-//use self::output_buffer::OutputBuffer;
-
-// Merge constants from mzdeflate
+// Merge constants from mzdeflate?
 pub const TINFL_LZ_DICT_SIZE: usize = 32768;
 
 /// The number of huffman tables used.
@@ -77,11 +70,9 @@ const DIST_TABLE: usize = 1;
 const HUFFLEN_TABLE: usize = 2;
 
 //#[cfg(target_pointer_width = "64")]
+// TODO, there other dependencies, eg @truncate(u5/6, ...)
 const is_64bit = @sizeOf(usize) == @sizeOf(u64);
 const BitBuffer = if (is_64bit) u64 else u32;
-
-//#[cfg(not(target_pointer_width = "64"))]
-//type BitBuffer = u32;
 
 const HUFFMAN_LENGTH_ORDER: [19]u8 = []const u8 {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
@@ -94,7 +85,6 @@ pub const TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF: u32 = 4;
 /// Should we calculate the adler32 checksum of the output data?
 pub const TINFL_FLAG_COMPUTE_ADLER32: u32 = 8;
 
-//use self::inflate_flags::*;
 const MIN_TABLE_SIZES : [3]u16 = []const u16 {257, 1, 4};
 
 pub const LookupResult = struct {
@@ -140,15 +130,15 @@ pub const HuffmanTable = extern struct {
     /// If the returned value is negative, the code wasn't found in the
     /// fast lookup table and the full tree has to be traversed to find the code.
     // #[inline]
-    fn fast_lookup(self: *Self, bit_buf: BitBuffer) i16 {
+    inline fn fast_lookup(self: *Self, bit_buf: BitBuffer) i16 {
         const r = self.look_up[(bit_buf & (FAST_LOOKUP_SIZE - 1))];
-        warn("{}:fast_lookup({x016}), r={x04}\n", self, bit_buf, r);
+        //warn("{}:fast_lookup({x016}), r={x04}\n", self, bit_buf, r);
         return r;
     }
 
     /// Get the symbol and the code length from the huffman tree.
     // #[inline]
-    fn tree_lookup(self: *Self, fast_symbol: i32, bit_buf: BitBuffer, pcode_len: u32) LookupResult {
+    inline fn tree_lookup(self: *Self, fast_symbol: i32, bit_buf: BitBuffer, pcode_len: u32) LookupResult {
         var code_len = pcode_len;
         var symbol = fast_symbol;
         // We step through the tree until we encounter a positive value, which indicates a
@@ -174,7 +164,7 @@ pub const HuffmanTable = extern struct {
     /// It's possible we could avoid checking for 0 if we can guarantee a sane table.
     /// TODO: Check if a smaller type for code_len helps performance.
     // #[inline]
-    fn lookup(self: *Self, bit_buf: BitBuffer) ?LookupResult {
+    inline fn lookup(self: *Self, bit_buf: BitBuffer) ?LookupResult {
         const symbol = self.fast_lookup(bit_buf);
         if (symbol >= 0) {
             if ((symbol >> 9) != 0) {
@@ -351,21 +341,7 @@ pub const State = extern enum {
         };
     }
 
-    //#[inline]
-    fn begin(self: * Self, new_state: State) void {
-        self.* = new_state;
-    }
-
-    fn begin2(self: *const Self, new_state: State) void {
-        self.* = new_state;
-    }
 };
-
-fn begin(state: *State, new_state: State) void {
-    state.* = new_state;
-}
-
-//use self::State::*;
 
 // Not sure why miniz uses 32-bit values for these, maybe alignment/cache again?
 // # Optimization
@@ -408,18 +384,12 @@ const DIST_EXTRA: [32]u8 = []const u8 {
 /// The mask used when indexing the base/extra arrays.
 const BASE_EXTRA_MASK: usize = 32 - 1;
 
-// fn memset<T: Copy>(slice: &mut [T], val: T) {
-//     for x in slice {
-//         *x = val
-//     }
-// }
-
 /// Read an le u16 value from the slice iterator.
 ///
 /// # Panics
 /// Panics if there are less than two bytes left.
 //#[inline]
-fn read_u16_le(iter: *IterBuf) u16 {
+inline fn read_u16_le(iter: *IterBuf) u16 {
     var ret: u16 = 0;
     // let ret = {
     //     let two_bytes = &iter.as_ref()[0..2];
@@ -432,7 +402,7 @@ fn read_u16_le(iter: *IterBuf) u16 {
     //u16::from_le(ret)
     ret =  mem.readInt(iter.buf[iter.pos..iter.pos+@sizeOf(u16)], u16, builtin.Endian.Little);
     iter.pos += @sizeOf(u16);
-    warn("read_u16_le = {x04}\n", ret);
+    //warn("read_u16_le = {x04}\n", ret);
     return ret;
 }
 
@@ -442,7 +412,7 @@ fn read_u16_le(iter: *IterBuf) u16 {
 /// Panics if there are less than four bytes left.
 //#[inline(always)]
 //#[cfg(target_pointer_width = "64")]
-fn read_u32_le(iter: *IterBuf) u32 {
+inline fn read_u32_le(iter: *IterBuf) u32 {
     var ret: u32 = 0;
     // let ret = {
     //     let four_bytes = &iter.as_ref()[..4];
@@ -456,7 +426,7 @@ fn read_u32_le(iter: *IterBuf) u32 {
 
     ret =  mem.readInt(iter.buf[iter.pos..iter.pos+@sizeOf(u32)], u32, builtin.Endian.Little);
     iter.pos += @sizeOf(u32);
-    warn("read_u32_le = {x08}\n", ret);
+    //warn("read_u32_le = {x08}\n", ret);
     return ret;
 }
 
@@ -467,28 +437,25 @@ fn read_u32_le(iter: *IterBuf) u32 {
 /// This function assumes that there is at least 4 bytes left in the input buffer.
 //#[inline(always)]
 //#[cfg(target_pointer_width = "64")]
-fn fill_bit_buffer(l: *LocalVars, in_iter: *IterBuf) void {
-    // Read four bytes into the buffer at once.
-    if (l.num_bits < 30) {
-        l.bit_buf |= (u64(read_u32_le(in_iter))) << l.shift();
-        l.num_bits += 32;
+// TODO: depends on is_64bit
+inline fn fill_bit_buffer(l: *LocalVars, in_iter: *IterBuf) void {
+    if (is_64bit) {
+        // Read four bytes into the buffer at once.
+        if (l.num_bits < 30) {
+            l.bit_buf |= (BitBuffer(read_u32_le(in_iter))) << l.shift();
+            l.num_bits += 32;
+        }
+    } else {
+        // If the buffer is 32-bit wide, read 2 bytes instead.
+        if (l.num_bits < 15) {
+            l.bit_buf |= BitBuffer(read_u16_le(in_iter)) << l.shift();
+            l.num_bits += 16;
+        }
     }
 }
 
-/// Same as previous, but for non-64-bit platforms.
-/// Ensures at least 16 bits are present, requires at least 2 bytes in the in buffer.
-// #[inline(always)]
-// #[cfg(not(target_pointer_width = "64"))]
-// fn fill_bit_buffer(l: &mut LocalVars, in_iter: &mut slice::Iter<u8>) {
-//     // If the buffer is 32-bit wide, read 2 bytes instead.
-//     if l.num_bits < 15 {
-//         l.bit_buf |= (read_u16_le(in_iter) as BitBuffer) << l.num_bits;
-//         l.num_bits += 16;
-//     }
-// }
-
 //#[inline]
-fn _transfer_unaligned_u64(buf: []u8, from: isize, to: isize) void {
+//fn _transfer_unaligned_u64(buf: []u8, from: isize, to: isize) void {
     // unsafe {
     //     let mut data = ptr::read_unaligned((*buf).as_ptr().offset(from) as *const u32);
     //     ptr::write_unaligned((*buf).as_mut_ptr().offset(to) as *mut u32, data);
@@ -496,14 +463,14 @@ fn _transfer_unaligned_u64(buf: []u8, from: isize, to: isize) void {
     //     data = ptr::read_unaligned((*buf).as_ptr().offset(from + 4) as *const u32);
     //     ptr::write_unaligned((*buf).as_mut_ptr().offset(to + 4) as *mut u32, data);
     // };
-}
+//}
 
 /// Check that the zlib header is correct and that there is enough space in the buffer
 /// for the window size specified in the header.
 ///
 /// See https://tools.ietf.org/html/rfc1950
 //#[inline]
-fn validate_zlib_header(cmf: u32, flg: u32, flags: u32, mask: usize) Action {
+inline fn validate_zlib_header(cmf: u32, flg: u32, flags: u32, mask: usize) Action {
     var failed =
     // cmf + flg should be divisible by 31.
         (((cmf * 256) + flg) % 31 != 0) or
@@ -517,7 +484,7 @@ fn validate_zlib_header(cmf: u32, flg: u32, flags: u32, mask: usize) Action {
     var badwrap = false;
     if ((flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF) == 0) {
         // Bail if the buffer is wrapping and the window size is larger than the buffer.
-        warn("mask={}, window_size={}\n", (mask + 1), window_size);
+        //warn("mask={}, window_size={}\n", (mask + 1), window_size);
         badwrap = (mask + 1) < window_size;
     }
 
@@ -525,8 +492,8 @@ fn validate_zlib_header(cmf: u32, flg: u32, flags: u32, mask: usize) Action {
     const badwindow = window_size > 32768;
 
     if (failed or badwindow or badwrap) {
-        warn("validate_zlib_header failed={}, badwindow={}, badwrap={}\n",
-             failed, badwindow, badwrap);
+        //warn("validate_zlib_header failed={}, badwindow={}, badwrap={}\n",
+        //     failed, badwindow, badwrap);
         return Action{.Jump = State.BadZlibHeader};
     } else {
         return Action{.Jump = State.ReadBlockHeader};
@@ -548,9 +515,9 @@ const ActionOrSymbol = union(enum) {
     fn dump(self: *const Self) void {
         switch (self.*) {
             ActionOrSymbol.AOSAction => |a| {
-                warn("{}: action=", self); // , @enumToInt(a));
+                warn("{}: action=", self); // CHECK @enumToInt(a)); is there an equivalent for union(enum)
                 switch (a) {
-                    Action.None => |j| {
+                    Action.None => {
                         warn("None\n");
                     },
                     Action.Jump => |j| {
@@ -567,12 +534,12 @@ const ActionOrSymbol = union(enum) {
             },
         }
     }
-    // can't have an argument with the same name as the function
-    fn action(act: Action) ActionOrSymbol {
+    // CHECK can't have an argument with the same name as the function
+    inline fn action(act: Action) ActionOrSymbol {
         return ActionOrSymbol {.AOSAction = act};
     }
 
-    fn symbol(sym: i32) ActionOrSymbol {
+    inline fn symbol(sym: i32) ActionOrSymbol {
         return ActionOrSymbol {.AOSSymbol = sym};
     }
 
@@ -598,8 +565,8 @@ fn decode_huffman_code(
 {
     // As the huffman codes can be up to 15 bits long we need at least 15 bits
     // ready in the bit buffer to start decoding the next huffman code.
-    r.dump();
-    l.dump();
+    //r.dump();
+    //l.dump();
     if (l.num_bits < 15) {
         // First, make sure there is enough data in the bit buffer to decode a huffman code.
         if (in_iter.len() < 2) {
@@ -617,7 +584,7 @@ fn decode_huffman_code(
             // /* bit buffer contains >=15 bits (deflate's max. Huffman code size). */
             while (true) {
                 var temp: i32 = r.tables[table].fast_lookup(l.bit_buf);
-                warn("temp={}\n", temp);
+                //warn("temp={}\n", temp);
 
                 if (temp >= 0) {
                     const code_len = @bitCast(u32, temp >> 9);
@@ -693,7 +660,7 @@ fn decode_huffman_code(
         code_len = @bitCast(i32, res.code_length);
     }
 
-    warn("code_len={}\n", code_len);
+    //warn("code_len={}\n", code_len);
     if (code_len == 0) {
         return ActionOrSymbol.action(Action{.Jump = State.InvalidCodeLen});
     }
@@ -713,7 +680,7 @@ const IterBuf = struct {
         warn("{}: len={}, pos={}, byte={x02}\n", self, self.buf.len, self.*.pos, self.*.buf[self.*.pos]);
     }
 
-    fn next(self: *Self) ?u8 {
+    inline fn next(self: *Self) ?u8 {
         if (self.*.pos < self.buf.len) {
             self.*.pos += 1;
             return self.*.buf[self.*.pos - 1];
@@ -722,92 +689,101 @@ const IterBuf = struct {
         }
     }
 
-    fn len(self: *const Self) usize {
+    inline fn len(self: *const Self) usize {
         return self.buf.len - self.*.pos;
+    }
+
+    inline fn as_slice(self: *Self) []u8 {
+        return self.buf[self.pos..];
+    }
+
+    inline fn nth(self: *Self, n: usize) void {
+        self.pos += n;
     }
 };
 
 //#[inline]
-fn read_byte(in_iter: []u8, flags: u32, f: fn(u8) Action) Action
+//fn read_byte(in_iter: []u8, flags: u32, f: fn(u8) Action) Action
 // where
 //     F: FnOnce(u8) -> Action,
-{
-    switch (in_iter.next()) {
-        null => end_of_input(flags),
-        else  => |byte| f(byte),
-    }
-}
-
-// Actionless variants for now...
-fn get_byte(in_iter: *IterBuf, flags: u32) ?u8{
-    in_iter.*.dump();
-    const b = in_iter.*.next();
-    warn("get_byte(flags={x08}) -> {x02}\n", flags, b);
-    return b;
-}
+//{
+//    switch (in_iter.next()) {
+//        null => end_of_input(flags),
+//        else  => |byte| f(byte),
+//    }
+//}
 
 // TODO: `l: &mut LocalVars` may be slow similar to decompress_fast (even with inline(always))
 //#[inline]
-fn read_bits(
-    l: *LocalVars,
-    amount: u32,
-    in_iter: []u8,
-    flags: u32,
-    f: fn(*LocalVars, BitBuffer) Action,
-) Action
+// fn read_bits(
+//     l: *LocalVars,
+//     amount: u32,
+//     in_iter: []u8,
+//     flags: u32,
+//     f: fn(*LocalVars, BitBuffer) Action,
+// ) Action
 // where
 //     F: FnOnce(&mut LocalVars, BitBuffer) -> Action,
-{
-    const shift = @truncate(u5, amount);
-    while (l.num_bits < shift) {
-        // switch read_byte(in_iter, flags, |byte| {
-        //     l.bit_buf |= (byte as BitBuffer) << l.num_bits;
-            l.num_bits += 8;
-        //     Action::None
-        // }) {
-        //     Action::None => (),
-        //     action => return action,
-        // }
-    }
+// {
+//     const shift = @truncate(u5, amount);
+//     while (l.num_bits < shift) {
+//         // switch read_byte(in_iter, flags, |byte| {
+//         //     l.bit_buf |= (byte as BitBuffer) << l.num_bits;
+//             l.num_bits += 8;
+//         //     Action::None
+//         // }) {
+//         //     Action::None => (),
+//         //     action => return action,
+//         // }
+//     }
 
-    const bits = l.bit_buf & ((@typeOf(l.bit_buf)(1) << shift) - 1);
-    l.bit_buf >>= shift;
-    l.num_bits -= amount;
-    return f(l, bits);
+//     const bits = l.bit_buf & ((@typeOf(l.bit_buf)(1) << shift) - 1);
+//     l.bit_buf >>= shift;
+//     l.num_bits -= amount;
+//     return f(l, bits);
+// }
+
+// Actionless variants for now...needs closures?!?
+inline fn get_byte(in_iter: *IterBuf, flags: u32) ?u8{
+    //in_iter.*.dump();
+    const b = in_iter.*.next();
+    //warn("get_byte(flags={x08}) -> {x02}\n", flags, b);
+    return b;
 }
 
-fn get_bits(l: *LocalVars, amount: u32, in_iter: *IterBuf, flags: u32) ?BitBuffer {
+
+inline fn get_bits(l: *LocalVars, amount: u32, in_iter: *IterBuf, flags: u32) ?BitBuffer {
     const shift = @truncate(u5, amount);
-    warn("1 get_bits({}, {}) {x}, {}\n", amount, shift, l.bit_buf, l.num_bits);
+    //warn("1 get_bits({}, {}) {x}, {}\n", amount, shift, l.bit_buf, l.num_bits);
     while (l.num_bits < shift) {
         if (in_iter.next()) |byte| {
-            warn("1.1 get_bits byte = {x02}\n", byte);
+            //warn("1.1 get_bits byte = {x02}\n", byte);
             l.bit_buf |= BitBuffer(byte) << l.shift();
             l.num_bits += 8;
         } else {
             return null;
         }
     }
-    warn("2 get_bits({}, {}) {x}, {}\n", amount, shift, l.bit_buf, l.num_bits);
+    //warn("2 get_bits({}, {}) {x}, {}\n", amount, shift, l.bit_buf, l.num_bits);
 
     const bits = l.bit_buf & ((@typeOf(l.bit_buf)(1) << shift) - 1);
     l.bit_buf >>= shift;
     l.num_bits -= amount;
-    warn("3 get_bits({}, {}) -> bits={x}, {x}, {}\n", amount, shift, bits, l.bit_buf, l.num_bits);
+    //warn("3 get_bits({}, {}) -> bits={x}, {x}, {}\n", amount, shift, bits, l.bit_buf, l.num_bits);
     return bits;
 }
 
 //#[inline]
-fn pad_to_bytes(l: *LocalVars, in_iter: *[]u8, flags: u32, f: fn(*LocalVars) Action) Action
+//fn pad_to_bytes(l: *LocalVars, in_iter: *[]u8, flags: u32, f: fn(*LocalVars) Action) Action
 // where
 //     F: FnOnce(&mut LocalVars) -> Action,
-{
-    const num_bits = l.num_bits & 7;
-    return read_bits(l, num_bits, in_iter, flags, f(l));
-}
+// {
+//     const num_bits = l.num_bits & 7;
+//     return read_bits(l, num_bits, in_iter, flags, f(l));
+// }
 
 //#[inline]
-fn end_of_input(flags: u32) Action {
+inline fn end_of_input(flags: u32) Action {
     return Action{.End = if ((flags & TINFL_FLAG_HAS_MORE_INPUT) != 0) 
         TINFLStatus.NeedsMoreInput
     else 
@@ -832,20 +808,17 @@ fn start_static_table(r: *Decompressor) void {
     setmem(u8, r.tables[DIST_TABLE].code_size[0..32], 5);
 }
 
-// For my Rust based Emacs mode...
+// For my Rust based Zig, Emacs mode...
 inline fn shl(v: var, s: var) @typeOf(v) {
     return v << s;
 }
-inline fn shr(v: var, s: var) @typeOf(v) {
-    return v >> s;
-}
 
 fn init_tree(r: *Decompressor, l: *LocalVars) Action {
-    warn("init_tree()\n");
+    //warn("init_tree()\n");
     while (true) {
         var table = &r.tables[r.block_type];
         const table_size = r.table_sizes[r.block_type];
-        warn("block_type={}, table_size={}\n", r.block_type, table_size);
+        //warn("block_type={}, table_size={}\n", r.block_type, table_size);
         var total_symbols = []u32 {0} ** 16;
         var next_code = []u32 {0} ** 17;
         setmem(i16, table.look_up[0..], 0);
@@ -865,7 +838,7 @@ fn init_tree(r: *Decompressor, l: *LocalVars) Action {
             total <<= 1;
             next_code[i + 1] = total;
         }
-        warn("used_symbols={}, total={}\n", used_symbols, total);
+        //warn("used_symbols={}, total={}\n", used_symbols, total);
 
         if ((total != 65536) and (used_symbols > 1)) {
             return Action{.Jump = State.BadTotalSymbols};
@@ -940,8 +913,8 @@ fn init_tree(r: *Decompressor, l: *LocalVars) Action {
     }
 
     l.counter = 0;
-    r.dump();
-    l.dump();
+    //r.dump();
+    //l.dump();
     return Action{.Jump = State.DecodeLitlen};
 }
 
@@ -1015,7 +988,7 @@ fn apply_match(
     out_buf_size_mask: usize,
 ) void {
     assert(out_pos + match_len <= out_slice.len);
-    warn("appy_match({}, {}, {}, {})", out_pos, dist, match_len, out_buf_size_mask);
+    //warn("appy_match({}, {}, {}, {})", out_pos, dist, match_len, out_buf_size_mask);
 
     const source_pos = (out_pos -% dist) & out_buf_size_mask;
 
@@ -1343,12 +1316,11 @@ fn decompress_inner(
     const out_buf_start_pos = out_cur.position();
     const out_buf_size_mask: usize = if ((flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF) != 0) 
         @maxValue(usize)
-    else 
+    else
         // In the case of zero len, any attempt to write would produce HasMoreOutput,
         // so to gracefully process the case of there really being no output,
         // set the mask to all zeros.
         out_cur.get_ref().len - 1; //.saturating_sub(1);
-    
 
     // Ensure the output buffer's size is a power of 2, unless the output buffer
     // is large enough to hold the entire output file (in which case it doesn't
@@ -1374,7 +1346,7 @@ fn decompress_inner(
     };
 
     var status = state_machine: while(true) {
-        warn("state = {}\n", @enumToInt(state));
+        //warn("state = {}\n", @enumToInt(state));
         switch (state) {
             State.Start => { // 0
                 const action = while (true) {
@@ -1392,7 +1364,7 @@ fn decompress_inner(
                     } else {
                         break Action{.Jump = State.ReadBlockHeader};
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1411,7 +1383,7 @@ fn decompress_inner(
                     } else {
                         break end_of_input(flags);
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1430,7 +1402,7 @@ fn decompress_inner(
                     } else {
                         break end_of_input(flags);
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1472,15 +1444,26 @@ fn decompress_inner(
                 }
             },
 
-            // // Raw/Stored/uncompressed block.
-            // BlockTypeNoCompression => generate_state!(state, :state_machine, {
-            //     pad_to_bytes(&mut l, &mut in_iter, flags, |l| {
-            //         l.counter = 0;
-            //         Action::Jump(RawHeader)
-            //     })
-            // }),
-            State.BlockTypeNoCompression => unreachable,
-            // // Check that the raw block header is correct.
+            // Raw/Stored/uncompressed block.
+            State.BlockTypeNoCompression => {
+                const action = while (true) {
+                    const num_bits = l.num_bits & 7;
+                    if (get_bits(&l, num_bits, &in_iter, flags)) |_| {
+                        l.counter = 0;
+                        break Action{.Jump = State.RawHeader};
+                    } else {
+                        break :state_machine TINFLStatus.Failed;
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
             // RawHeader => generate_state!(state, :state_machine, {
             //     if l.counter < 4 {
             //         // Read block length and block length check.
@@ -1521,16 +1504,87 @@ fn decompress_inner(
             //         }
             //     }
             // }),
-            State.RawHeader => unreachable,
-            // // Read the byte from the bit buffer.
+            // Check that the raw block header is correct.
+            State.RawHeader => {
+                const action = while (true) {
+                    if (l.counter < 4) {
+                        // Read block length and block length check.
+                        if (l.num_bits != 0) {
+                            if (get_bits(&l, 8, &in_iter, flags)) |bits| {
+                                r.raw_header[l.counter] = @truncate(u8, bits);
+                                l.counter += 1;
+                                break Action{.None = {}};
+                            } else {
+                                break :state_machine TINFLStatus.Failed;
+                            }
+                        } else {
+                            if (get_byte(&in_iter, flags)) |byte| {
+                                r.raw_header[l.counter] = byte;
+                                l.counter += 1;
+                                break Action{.None = {}};
+                            } else {
+                                break end_of_input(flags);
+                            }
+                        }
+                    } else {
+                        // Check if the length value of a raw block is correct.
+                        // The 2 first (2-byte) words in a raw header are the length and the
+                        // ones complement of the length.
+                        const length = (u16(r.raw_header[1]) << 8) | r.raw_header[0];
+                        const check = (u16(r.raw_header[3]) << 8) | r.raw_header[2];
+                        const valid = length == ~check;
+                        l.counter = length;
+
+                        if (!valid) {
+                                 break Action{.Jump = State.BadRawLength};
+                        } else if (l.counter == 0) {
+                            // Empty raw block. Sometimes used for syncronization.
+                            break Action{.Jump = State.BlockDone};
+                        } else if (l.num_bits != 0) {
+                            // There is some data in the bit buffer, so we need to write that first.
+                            break Action{.Jump = State.RawReadFirstByte};
+                        } else {
+                            // The bit buffer is empty, so memcpy the rest of the uncompressed data from
+                            // the block.
+                            break Action{.Jump = State.RawMemcpy1};
+                        }
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
             // RawReadFirstByte => generate_state!(state, :state_machine, {
             //     read_bits(&mut l, 8, &mut in_iter, flags, |l, bits| {
             //         l.dist = bits as u32;
             //         Action::Jump(RawStoreFirstByte)
             //     })
             // }),
+            // Read the byte from the bit buffer.
+            State.RawReadFirstByte => {
+                const action = while (true) {
+                    if (get_bits(&l, 8, &in_iter, flags)) |bits| {
+                        l.dist = @truncate(u32, bits);
+                        break Action{.Jump = State.RawStoreFirstByte};
+                    } else {
+                        break :state_machine TINFLStatus.Failed;
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
-            // // Write the byte we just read to the output buffer.
             // RawStoreFirstByte => generate_state!(state, :state_machine, {
             //     if out_buf.bytes_left() == 0 {
             //         Action::End(TINFLStatus::HasMoreOutput)
@@ -1548,7 +1602,34 @@ fn decompress_inner(
             //         }
             //     }
             // }),
-            State.RawStoreFirstByte => unreachable,
+            // Write the byte we just read to the output buffer.
+            State.RawStoreFirstByte => {
+                const action = while (true) {
+                    if (out_buf.bytes_left() == 0) {
+                        break Action{.End = TINFLStatus.HasMoreOutput};
+                    } else {
+                        out_buf.write_byte(@truncate(u8, l.dist));
+                        l.counter -= 1;
+                        if ((l.counter == 0) or (l.num_bits == 0)) {
+                            break Action{.Jump = State.RawMemcpy1};
+                        } else {
+                            // There is still some data left in the bit buffer that needs to be output.
+                            // TODO: Changed this to jump to `RawReadfirstbyte` rather than
+                            // `RawStoreFirstByte` as that seemed to be the correct path, but this
+                            // needs testing.
+                            break Action{.Jump = State.RawReadFirstByte};
+                        }
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
             // RawMemcpy1 => generate_state!(state, :state_machine, {
             //     if l.counter == 0 {
@@ -1559,7 +1640,25 @@ fn decompress_inner(
             //         Action::Jump(RawMemcpy2)
             //     }
             // }),
-            State.RawMemcpy1 => unreachable,
+            State.RawMemcpy1 => {
+                const action = while (true) {
+                    if (l.counter == 0) {
+                        break Action{.Jump = State.BlockDone};
+                    } else if (out_buf.bytes_left() == 0) {
+                        break Action{.End = TINFLStatus.HasMoreOutput};
+                    } else {
+                        break Action{.Jump = State.RawMemcpy2};
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
             // RawMemcpy2 => generate_state!(state, :state_machine, {
             //     if in_iter.len() > 0 {
@@ -1582,7 +1681,35 @@ fn decompress_inner(
             //         end_of_input(flags)
             //     }
             // }),
-            State.RawMemcpy2 => unreachable,
+            State.RawMemcpy2 => {
+                const action = while (true) {
+                    if (in_iter.len() > 0) {
+                        // Copy as many raw bytes as possible from the input to the output using memcpy.
+                        // Raw block lengths are limited to 64 * 1024, so casting through usize and u32
+                        // is not an issue.
+                        const space_left = out_buf.bytes_left();
+                        const bytes_to_copy = MIN(usize, MIN(usize, space_left, in_iter.len()),
+                                                  l.counter);
+
+                        out_buf.write_slice(in_iter.as_slice()[0..bytes_to_copy]);
+                        // our version of nth() given that we understood that correctly...
+                        in_iter.nth(bytes_to_copy);
+                        // (&mut in_iter).nth(bytes_to_copy - 1);
+                        l.counter -= @truncate(u32, bytes_to_copy);
+                        break Action{.Jump = State.RawMemcpy1};
+                    } else {
+                        break end_of_input(flags);
+                    }
+                } else Action{.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
 
             // Read how many huffman codes/symbols are used for each table.
             State.ReadTableSizes => {
@@ -1721,14 +1848,14 @@ fn decompress_inner(
             },
             State.DecodeLitlen => { // 12
                 // DecodeLitlen => generate_state!(state, :state_machine, {
-                warn("in={}, out={}\n", in_iter.len(), out_buf.bytes_left());
+                //warn("in={}, out={}\n", in_iter.len(), out_buf.bytes_left());
                 const action = while (true) {
                     if ((in_iter.len() < 4) or (out_buf.bytes_left() < 2)) {
-                        warn("case 1\n");
+                        //warn("case 1\n");
                         // See if we can decode a literal with the data we have left.
                         // Jumps to next state (WriteSymbol) if successful.
                         const symbol = decode_huffman_code(r, &l, LITLEN_TABLE, flags, &in_iter);
-                        symbol.dump();
+                        //symbol.dump();
                         switch (symbol) {
                             ActionOrSymbol.AOSAction => |a| break a,
                             ActionOrSymbol.AOSSymbol => |s| {
@@ -1740,7 +1867,7 @@ fn decompress_inner(
                     } else if (out_buf.bytes_left() >= 259 and in_iter.len() >= 14) {
                         // There is enough space, use the fast inner decompression
                         // function.
-                        warn("case 2\n");
+                        //warn("case 2\n");
                         const res = decompress_fast(
                             r,
                             &in_iter,
@@ -1757,11 +1884,11 @@ fn decompress_inner(
                             break Action{.End = res.status};
                         }
                     } else {
-                        warn("case 3\n");
+                        //warn("case 3\n");
                         fill_bit_buffer(&l, &in_iter);
 
                         if (r.tables[LITLEN_TABLE].lookup(l.bit_buf)) |res| {
-                            res.dump();
+                            //res.dump();
                             l.counter = @bitCast(u32, res.symbol);
                             l.bit_buf >>= @truncate(u6, res.code_length);
                             l.num_bits -= res.code_length;
@@ -1777,7 +1904,7 @@ fn decompress_inner(
                                 }
 
                                 if (r.tables[LITLEN_TABLE].lookup(l.bit_buf)) |res1| {
-                                    res1.dump();
+                                    //res1.dump();
                                     const symbol = @bitCast(u32, res1.symbol);
                                     l.bit_buf >>= @truncate(u6, res1.code_length);
                                     l.num_bits -= res1.code_length;
@@ -1822,7 +1949,7 @@ fn decompress_inner(
                     } else {
                         break Action{.End = TINFLStatus.HasMoreOutput};
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1858,7 +1985,7 @@ fn decompress_inner(
                             break Action{.Jump = State.DecodeDistance};
                         }
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1878,7 +2005,7 @@ fn decompress_inner(
                     } else {
                         break :state_machine TINFLStatus.Failed;
                     }
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -1929,7 +2056,7 @@ fn decompress_inner(
             },
 
             State.ReadExtraBitsDistance => {
-                l.dump();
+                //l.dump();
                 const action = while (true) {
                     const num_extra = l.num_extra;
                     if (get_bits(&l, num_extra, &in_iter, flags)) |bits| {
@@ -2022,7 +2149,37 @@ fn decompress_inner(
             //         Action::End(TINFLStatus::HasMoreOutput)
             //     }
             // }),
-            State.WriteLenBytesToEnd => unreachable,
+            State.WriteLenBytesToEnd => {
+                const action = while (true) {
+                    if (out_buf.bytes_left() > 0) {
+                        const source_pos = (l.dist_from_out_buf_start +% l.dist) & out_buf_size_mask;
+                        //             .wrapping_sub(l.dist as usize) & out_buf_size_mask;
+                        const out_pos = out_buf.position();
+
+                        const len = MIN(usize, out_buf.bytes_left(), l.counter);
+                        transfer(out_buf.get_mut(), source_pos, out_pos, len, out_buf_size_mask);
+
+                        l.dist_from_out_buf_start += len;
+                        out_buf.set_position(out_pos + len);
+                        l.counter -= @truncate(u32, len);
+                        if (l.counter == 0) {
+                            break Action{.Jump = State.DecodeLitlen};
+                        } else {
+                            break Action{.None = {}};
+                        }
+                    } else {
+                        break Action{.End = TINFLStatus.HasMoreOutput};
+                    }
+                } else Action {.None = {}};
+                switch (action) {
+                    Action.None => continue,
+                    Action.Jump => |new_state| {
+                        state = new_state;
+                        continue :state_machine;
+                    },
+                    Action.End => |result| break :state_machine result,
+                }
+            },
             State.BlockDone => { // 20
                 const action = while (true) {
                     // End once we've read the last block.
@@ -2031,7 +2188,7 @@ fn decompress_inner(
                             const in_consumed = in_buf.len - in_iter.len();
                             const undo = undo_bytes(&l, @truncate(u32, in_consumed));
                             in_iter = IterBuf{.buf = in_buf[in_consumed - undo..], .pos = 0};
-                            in_iter.dump();
+                            //in_iter.dump();
                             l.bit_buf &= ((BitBuffer(1) << l.shift()) - 1);
                             //assert(l.num_bits == 0);
                             //in_buf[in_consumed - undo..].iter();
@@ -2059,7 +2216,7 @@ fn decompress_inner(
             },
             State.ReadAdler32 => {
                 const action = while (true) {
-                    l.dump();
+                    //l.dump();
                     if (l.counter < 4) {
                         if (l.num_bits != 0) {
                              if (get_bits(&l, 8, &in_iter, flags)) |bits| {
@@ -2080,7 +2237,7 @@ fn decompress_inner(
                         }
                     }
                     break Action{.Jump = State.DoneForever};
-                } else Action.None;
+                } else Action{.None = {}};
                 switch (action) {
                     Action.None => continue,
                     Action.Jump => |new_state| {
@@ -2122,12 +2279,12 @@ fn decompress_inner(
     const need_adler = (flags & (TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_COMPUTE_ADLER32) != 0);
     if (need_adler and (@enumToInt(status) >= 0)) {
         const out_buf_pos = out_buf.position();
-        warn("Checking adler32, {} to {}\n", out_buf_start_pos, out_buf_pos);
+        //warn("Checking adler32, {} to {}\n", out_buf_start_pos, out_buf_pos);
         r.check_adler32 = adler32(
             r.check_adler32,
             out_buf.get_ref()[out_buf_start_pos..out_buf_pos],
         );
-        warn("adler32={x08}, {x08}\n", r.check_adler32, r.z_adler32);
+        //warn("adler32={x08}, {x08}\n", r.check_adler32, r.z_adler32);
 
         // Once we are done, check if the checksum matches with the one provided in the zlib header.
         if ((status == TINFLStatus.Done) and (flags & TINFL_FLAG_PARSE_ZLIB_HEADER != 0) and
@@ -2145,8 +2302,23 @@ fn decompress_inner(
     );
 }
 
-test "Decompress.dummy" {
-    assert(false == false);
+test "Decompress.decompressor.NoCompression" {
+    var d = Decompressor.new();
+    var input = "x\x01\x01\x19\x00\xe6\xffabcdefghijklmnopqrstuvxyz\x85l\n\xa9";
+    var expected = "abcdefghijklmnopqrstuvxyz";
+    var output = []u8 {0} ** 128;
+    var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
+    var res = decompress(&d, input[0..], &c, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    res.dump();
+    if (res.outpos < 128) {
+        warn("\n\n**  output='{}'\n", output[0..res.outpos]);
+        if (mem.eql(u8, expected, output[0..res.outpos])) {
+            warn("WHAT? Result is as expected\n");
+        }
+    }
+    if (res.status == TINFLStatus.Done and res.outpos > 0) {
+        assert(mem.eql(u8, expected, output[0..res.outpos]));
+    }
 }
 
 test "Decompress.decompressor.one" {
@@ -2188,9 +2360,9 @@ test "Decompress.decompressor.two" {
 }
 
 test "Decompress.decompressor.dynamic" {
-    var d = Decompressor.new();
     var input = "\x78\x01\xa5\xc7\xa1\x0d\x00\x00\x08\x03\x30\xcf\x15\x1c\xb3\x47\x10\x43\x21\x91\x1c\x4f\x76\xc3\x4c\x93\x82\x3d\xb5\x4c\x71\x30\x13\x0f\x91\xcd\x1d\x59";
     var expected = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
+    var d = Decompressor.new();
     var output = []u8 {0} ** 1024;
     var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
     var res = decompress(&d, input[0..], &c, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
