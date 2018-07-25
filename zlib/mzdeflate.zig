@@ -7,6 +7,7 @@ const assertError = std.debug.assertError;
 const assertOrPanic = std.debug.assertOrPanic;
 const builtin = @import("builtin");
 
+const crc32 = @import("crc32.zig").crc32;
 const adler32 = @import("adler32.zig").adler32;
 const mzutil = @import("mzutil.zig");
 const Cursor = mzutil.Cursor;
@@ -16,6 +17,7 @@ const OutputBuffer = mzutil.OutputBuffer;
 const SavedOutputBuffer = mzutil.SavedOutputBuffer;
 const SeekFrom = mzutil.SeekFrom;
 const setmem = mzutil.setmem;
+const typeNameOf = mzutil.typeNameOf;
 
 // License MIT
 // From https://github.com/Frommi/miniz_oxide
@@ -445,10 +447,29 @@ test "tdefl flush" {
 //#[repr(i32)]
 //#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub const TDEFLStatus = extern enum {
+    const Self = this;
     BadParam = -2,
     PutBufFailed = -1,
     Okay = 0,
     Done = 1,
+
+    //#[derive(Debug)]
+    pub fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We ignore the actual format char for now
+        if (fmt.len > 0) {
+            return std.fmt.format(context, Errors, output, "{}.{}@{x}",
+                                  typeNameOf(self.*), @ptrToInt(self), @tagName(self.*));
+        } else {
+            return std.fmt.format(context, Errors, output, "{}.{}",
+                                  typeNameOf(self.*), @tagName(self.*));
+        }
+    }
 };
 
 const MAX_HUFF_SYMBOLS = 288;
@@ -1221,6 +1242,7 @@ pub const RLE = struct {
 
 const Params = struct {
     const Self = this;
+    pub gzip: bool,
     pub flags: u32,
     pub greedy_parsing: bool,
     pub block_index: u32,
@@ -1252,8 +1274,10 @@ const Params = struct {
         self, self.flags, self.greedy_parsing);
     }
 
-    fn init(flags: u32) Self {
+    fn init(flags: u32, gzip: bool) Self {
+        const initcsum: u32 = if (gzip) u32(0) else MZ_ADLER32_INIT;
         return Params {
+            .gzip = gzip,
             .flags = flags,
             .greedy_parsing = (flags & TDEFL_GREEDY_PARSING_FLAG) != 0,
             .block_index = 0,
@@ -1264,7 +1288,7 @@ const Params = struct {
             .flush_ofs = 0,
             .flush_remaining = 0,
             .finished = false,
-            .adler32 = MZ_ADLER32_INIT,
+            .adler32 = initcsum,
             .src_pos = 0,
             .out_buf_ofs = 0,
             .prev_return_status = TDEFLStatus.Okay,
@@ -1350,8 +1374,8 @@ const CompressionResult = struct {
 
     fn dump(self: *Self) void {
         @setCold(true);
-        warn("{}: inpos={}, outpos={}, status={}\n", self,
-             self.inpos, self.outpos, @enumToInt(self.status));
+        warn("{}: inpos={}, outpos={}, status={},{}\n", self,
+             self.inpos, self.outpos, @enumToInt(self.status), &self.status);
     }
 
     fn new(status: TDEFLStatus, inpos: usize, outpos: usize) Self {
@@ -1367,7 +1391,7 @@ pub const Compressor = struct {
     huff: Huffman,
     dict: Dictionary,
 
-    fn init(flags: u32) Self {
+    fn init(flags: u32, gzip: bool) Self {
         warn("new Compressor\n");
         var comp: Self = Compressor {.lz = undefined, .params = undefined, .huff = Huffman.init(), .dict = undefined};
         // return Compressor {
@@ -1382,9 +1406,9 @@ pub const Compressor = struct {
         return comp;
     }
 
-    fn initialize(self: *Self, flags: u32) void {
+    fn initialize(self: *Self, flags: u32, gzip: bool) void {
         self.lz = LZ.init();
-        self.params = Params.init(flags);
+        self.params = Params.init(flags, gzip);
         self.huff = Huffman.init();
         self.dict = Dictionary.init(flags);
     }
@@ -1671,7 +1695,11 @@ pub const Compressor = struct {
 
         if (callback.in_buf) |in_buf| {
             if ((self.params.flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) != 0) {
-                self.params.adler32 = adler32(self.params.adler32, in_buf[0..self.params.src_pos]);
+                if (self.params.gzip) {
+                    self.params.adler32 = crc32(self.params.adler32, in_buf[0..self.params.src_pos]);
+                } else {
+                    self.params.adler32 = adler32(self.params.adler32, in_buf[0..self.params.src_pos]);
+                }
             }
         }
 
@@ -1731,8 +1759,10 @@ pub const Compressor = struct {
 
         // If we are at the start of the stream, write the zlib header if requested.
         if (((self.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) and (self.params.block_index == 0)) {
-            output.put_bits(0x78, 8);
-            output.put_bits(0x01, 8);
+            if (!self.params.gzip) {
+                output.put_bits(0x78, 8);
+                output.put_bits(0x01, 8);
+            }
         }
 
         // Output the block header.
@@ -1790,7 +1820,7 @@ pub const Compressor = struct {
         if (flush != TDEFLFlush.None) {
             if (flush == TDEFLFlush.Finish) {
                 output.pad_to_bytes();
-                if ((self.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) {
+                if (((self.params.flags & TDEFL_WRITE_ZLIB_HEADER) != 0) and (!self.params.gzip)) {
                     var adler = self.params.adler32;
                     var i: usize = 0;
                     while (i < 4) : (i += 1) {
@@ -2437,7 +2467,7 @@ test "Compress.dynamic" {
             var out = []u8 {0} ** (8 * 1024);
             var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
             var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-            res.dump();
+            warn("res={}\n", &res);
             assert(mem.eql(u8, out[0..res.outpos], input));
         }
 
@@ -2449,8 +2479,8 @@ test "Compress.File.Fast" {
     var raw_bytes: [16 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
 
-    const tmp_file_name = "adler32.zig";
-    var file = try os.File.openRead(allocator, tmp_file_name);
+    const file_name = "adler32.zig";
+    var file = try os.File.openRead(allocator, file_name);
     defer file.close();
 
     const file_size = try file.getEndPos();
@@ -2487,7 +2517,7 @@ test "Compress.File.Fast" {
             var out = []u8 {0} ** (8 * 1024);
             var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
             var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-            res.dump();
+            warn("res={}\n", &res);
             assert(mem.eql(u8, out[0..res.outpos], contents));
         }
 
@@ -2501,8 +2531,8 @@ test "Compress.File.Dynamic" {
     const io = std.io;
     var raw_bytes: [16 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
-    const tmp_file_name = "adler32.zig";
-    var file = try os.File.openRead(allocator, tmp_file_name);
+    const file_name = "adler32.zig";
+    var file = try os.File.openRead(allocator, file_name);
     defer file.close();
 
     const file_size = try file.getEndPos();
@@ -2539,10 +2569,20 @@ test "Compress.File.Dynamic" {
             var out = []u8 {0} ** (8 * 1024);
             var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
             var res = decompress(&d, output[0..r.outpos], &cur, TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-            res.dump();
+            warn("res={}\n", &res);
             assert(mem.eql(u8, out[0..res.outpos], contents));
         }
 
+    }
+}
+
+
+fn hexdump(buf: []const u8, newline: bool) void {
+    for (buf) |b| {
+        warn("{x02}", b);
+    }
+    if (newline) {
+        warn("\n");
     }
 }
 
@@ -2552,10 +2592,11 @@ pub fn main() !void {
     //                 or builtin.mode == builtin.Mode.ReleaseSmall);
     const os = std.os;
     const io = std.io;
-    var raw_bytes: [16 * 1024]u8 = undefined;
+
+    var raw_bytes: [8 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
-    const tmp_file_name = "adler32.zig";
-    var file = try os.File.openRead(allocator, tmp_file_name);
+    const file_name = "adler32.zig";
+    var file = try os.File.openRead(allocator, file_name);
     defer file.close();
 
     const file_size = try file.getEndPos();
@@ -2564,25 +2605,92 @@ pub fn main() !void {
     var file_in_stream = io.FileInStream.init(&file);
     var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
     const st = &buf_stream.stream;
-    const contents = try st.readAllAlloc(allocator, file_size + 4);
+    const contents = try st.readAllAlloc(allocator, file_size + 16);
     warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
     defer allocator.free(contents);
 
-    //var input = @embedFile(tmp_file_name);
-    //warn("{x08} vs {x08}\n", adler32(MZ_ADLER32_INIT, input), adler32(MZ_ADLER32_INIT, contents));
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    const gzip = true;
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0), gzip);
 
-    var output = []u8 {0} ** (6 * 1024);
-    var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
-    if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
-        assert(mem.eql(u8, input, contents[0..r.outpos]));
-        warn("8) Guesstimated compression: {.02}%\n",
-             (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
-        for (output[0..r.outpos]) |b, i| {
-            warn("\\x{x02}", b);
+    var output = []u8 {0} ** (4 * 1024);
+    // compress in a number of blocks/chunks
+    var r: CompressionResult = undefined;
+    const blksize: usize = 8 * 1024;
+    var remaining = file_size;
+    var pos: usize = 0;
+    var n: usize = 0;
+    var cksum: u32 = 0;
+    var crcbuf = []u8 {0} ** 4;
+    while (remaining > 0) {
+        const nbytes = MIN(usize, remaining, blksize);
+        remaining -= nbytes;
+        r = c.compress(contents[pos..pos+nbytes], output[n..], if (remaining == 0) TDEFLFlush.Finish else TDEFLFlush.Sync);
+        r.dump();
+        switch (r.status) {
+            TDEFLStatus.BadParam, TDEFLStatus.PutBufFailed => break,
+            else => {
+                n += r.outpos;
+                pos += r.inpos;
+            },
         }
-        warn("\n");
+    }
+    if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
+        if (gzip) {
+            cksum = c.params.adler32;
+            var gziphdr = []u8 {0} ** 10;
+            gziphdr[0] = 0x1f;      // id1
+            gziphdr[1] = 0x8b;      // id2
+            gziphdr[2] = 0x08;      // cm
+            gziphdr[3] = 0x00;      // flg
+            // 4,5,6,7 = mtime
+            gziphdr[8] = 0x02;// 8 = xfl, max compression
+            gziphdr[9] = 0x03; // 9 = os, 0x03=Unix
+            {
+                var ofile = try os.File.openWrite(allocator, "_test_.gz"); // file_name
+                defer ofile.close();
+
+                var file_out_stream = io.FileOutStream.init(&ofile);
+                var obuf_stream = io.BufferedOutStream(io.FileOutStream.Error).init(&file_out_stream.stream);
+                const ost = &obuf_stream.stream;
+                try ost.write(gziphdr[0..]);
+                try ost.write(output[0..n]);
+                // need some trailing stuff, crc, isize
+                crcbuf[0] = @truncate(u8, cksum);
+                crcbuf[1] = @truncate(u8, cksum >> 8);
+                crcbuf[2] = @truncate(u8, cksum >> 16);
+                crcbuf[3] = @truncate(u8, cksum >> 24);
+                try ost.write(crcbuf[0..]);
+                crcbuf[0] = @truncate(u8, file_size);
+                crcbuf[1] = @truncate(u8, file_size >> 8);
+                crcbuf[2] = @truncate(u8, file_size >> 16);
+                crcbuf[3] = @truncate(u8, file_size >> 24);
+                try ost.write(crcbuf[0..]);
+
+                // make sure to flush the file
+                try obuf_stream.flush();
+                // gzip -v -t _test_.gz should say '_test_.gz: OK'
+            }
+
+        }
+        //warn("\n====crc32={x08}\n", cksum);
+        // write deflate blocks
+        // write crc32 and isize (filesize % 2^32))
+        warn("8) n={}, Guesstimated compression: {.02}%\n",
+             n, (100.0 * (@intToFloat(f32, n)/@intToFloat(f32, file_size))));
+        if (true) {
+            // wow, working roundtrip...
+            const mzinflate =  @import("mzinflate.zig");
+            const Decompressor = mzinflate.Decompressor;
+            const decompress = mzinflate.decompress;
+            const TINFL_FLAG_PARSE_ZLIB_HEADER = mzinflate.TINFL_FLAG_PARSE_ZLIB_HEADER;
+            const TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF = mzinflate.TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+            var d = Decompressor.new();
+            var out = []u8 {0} ** (@sizeOf(@typeOf(raw_bytes))); // same size as raw_bytes
+            var cur = Cursor([]u8){.pos= 0, .inner = out[0..]};
+            var res = decompress(&d, output[0..n], &cur, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+            warn("res={}\n", &res);
+            assert(mem.eql(u8, out[0..n], contents));
+        }
     }
 }
