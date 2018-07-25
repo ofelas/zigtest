@@ -9,6 +9,11 @@ const builtin = @import("builtin");
 
 const debug = false;
 
+pub inline fn typeNameOf(v: var) []const u8 {
+    return @typeName(@typeOf(v));
+}
+
+
 // Don't call this memset or it will call itself...
 pub inline fn setmem(comptime T: type, slice: []T, val: T) void {
     //warn("setmem({} {})\n", slice.len, val);
