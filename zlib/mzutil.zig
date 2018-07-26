@@ -13,6 +13,146 @@ pub inline fn typeNameOf(v: var) []const u8 {
     return @typeName(@typeOf(v));
 }
 
+pub fn deriveDebug(
+    context: var,
+    comptime fmt: []const u8,
+    comptime Errors: type,
+    output: fn (@typeOf(context), []const u8) Errors!void,
+    value: var,
+) Errors!void {
+    const T = @typeOf(value);
+    if (T == error) {
+        try output(context, "error.");
+        return output(context, @errorName(value));
+    }
+    switch (@typeInfo(T)) {
+        builtin.TypeId.Int => {
+            return std.fmt.format(context, Errors, output, "{}", value);
+        },
+        builtin.TypeId.Float => {
+            return std.fmt.format(context, Errors, output, "{.6}", value);
+        },
+        builtin.TypeId.Void => {
+            return output(context, "void");
+        },
+        builtin.TypeId.Bool => {
+            return output(context, if (value) "true" else "false");
+        },
+        builtin.TypeId.Enum => |v| {
+            try output(context, @typeName(T) ++ ".");
+            //try output(context, @tagName(v.layout) ++ ".");
+            //try output(context, "(Enum.");
+            //try output(context, @tagName(v.layout));
+            //try output(context, ".");
+            //try output(context, @typeName(v.tag_type));
+            //try output(context, "(");
+            //try deriveDebug(context, Errors, output, @tagName(T));
+            // switch (@enumToInt(v.layout)) {
+            //     0 => {
+            //         inline for (v.fields) |f| {
+            //             if (@enumToInt(value) == f.value) {
+            //                 try output(context, f.name);
+            //                 //try std.fmt.format(context, Errors, output, "({})", @enumToInt(value));
+            //             }
+            //         }
+            //     },
+            //     else => {
+            //         return output(context, @tagName(value));
+            //     }
+            // }
+            return output(context, @tagName(value));
+            //return output(context, "");
+        },
+        builtin.TypeId.Union => |v| {
+            try output(context, @typeName(T) ++ ".");
+            //try output(context, "(Union");
+            //try output(context, @tagName(v.layout));
+            // if (v.tag_type) |tt| {
+            //     try output(context, ".");
+            //     try output(context, @typeName(tt));
+            // }
+            inline for (v.fields) |f| {
+                if (mem.eql(u8, @tagName(value), f.name)) {
+                    try output(context, f.name ++ ":");
+                    //if (f.enum_field) |e| {
+                    //    try std.fmt.format(context, Errors, output, "({})", e.value);
+                    //}
+                    try deriveDebug(context, "{}", Errors, output, @field(value, f.name));
+                }
+            }
+            return output(context, "");
+        },
+        builtin.TypeId.Struct => |v| {
+            try output(context, @typeName(T) ++ "{");
+            //try output(context, @tagName(v.layout));
+            // if (v.tag_type) |tt| {
+            //     try output(context, ".");
+            //     try output(context, @typeName(tt));
+            // }
+            return inline for (v.fields) |f, i| {
+                if (i > 0) {
+                    try output(context, ", ");
+                }
+                try output(context, "." ++ f.name ++ "=");
+                //if (f.offset) |o| {
+                //try std.fmt.formatInt(o, 10, false, 0, context, Errors, output);
+                try deriveDebug(context, "{}", Errors, output, @field(value, f.name));
+                //}
+                //try deriveDebug(context, Errors, output, @memberName(T, i));
+            } else try output(context, "}");
+        },
+        builtin.TypeId.Optional => {
+            if (value) |payload| {
+                return deriveDebug(context, "{}", Errors, output, payload);
+            } else {
+                return output(context, "null");
+            }
+        },
+        builtin.TypeId.ErrorUnion => {
+            if (value) |payload| {
+                return deriveDebug(context, fmt, Errors, output, payload);
+            } else |err| {
+                return deriveDebug(context, fmt, Errors, output, err);
+            }
+        },
+        builtin.TypeId.ErrorSet => {
+             try output(context, "error.");
+             return output(context, @errorName(value));
+        },
+        builtin.TypeId.Promise => {
+            return std.fmt.format(context, Errors, output, "promise@{x}", @ptrToInt(value));
+        },
+        builtin.TypeId.Pointer => |ptr_info| {
+            //try output(context, typeNameOf(value));
+            //try output(context, "->");
+            switch (ptr_info.size) {
+                builtin.TypeInfo.Pointer.Size.One => {
+                    return deriveDebug(context, fmt, Errors, output, value.*);
+                },
+                builtin.TypeInfo.Pointer.Size.Many => {
+                    return output(context, "Many:" ++ @typeName(@typeOf(ptr_info)));
+                },
+                builtin.TypeInfo.Pointer.Size.Slice => {
+                    const casted_value = ([]const u8)(value);
+                    return std.fmt.format(context, Errors, output, "'{}'...",
+                                          casted_value[0..MIN(usize, 3, value.len)]);
+                    //return output(context, "Slice:" ++ @typeName(@typeOf(casted_value)));
+                },
+                else => {
+                    return output(context, @typeName(@typeOf(ptr_info)));
+                }
+            }
+        },
+        builtin.TypeId.Array => |info| {
+            // if (info.child == u8) {
+            //     return std.fmt.format(context, Errors, output, "'{}'", value);
+            // }
+            return std.fmt.format(context, Errors, output, "[{}]{}@{x}", value.len, @typeName(T.Child), @ptrToInt(&value));
+        },
+        else => @compileError("Unable to format type: '" ++ @typeName(T) ++ "'"),
+    }
+}
+
 
 // Don't call this memset or it will call itself...
 pub inline fn setmem(comptime T: type, slice: []T, val: T) void {
@@ -50,10 +190,15 @@ pub const SavedOutputBuffer = struct {
     pub bits_in: u32,
     pub local: bool,
 
-    fn dump(self: *const Self) void {
-        @setCold(true);
-        warn("SavedOutputBuffer@{} pos={}, bit_buffer={x08}, bits_in={}, local={}\n",
-             self, self.pos, self.bit_buffer, self.bits_in, self.local);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 };
 
@@ -70,9 +215,15 @@ pub fn Cursor(comptime T: type) type {
         pos: usize,
         inner: T,
 
-        fn dump(self: *Self) void {
-            @setCold(true);
-            warn("{} pos={}, inner.len={}\n", self, self.pos, self.inner.len);
+        fn format(
+            self: *const Self,
+            comptime fmt: []const u8,
+            context: var,
+            comptime Errors: type,
+            output: fn (@typeOf(context), []const u8) Errors!void,
+        ) Errors!void {
+            // We hereby take over all printing...
+            return deriveDebug(context, "{}", Errors, output, self.*);
         }
 
         fn init(self: *Self, ary: T) void {
@@ -162,16 +313,22 @@ pub const OutputBuffer = struct {
     pub bit_buffer: u32,
     pub bits_in: u32,
 
-    fn dump(self: *const Self) void {
-        @setCold(true);
-        warn("{} {x08} {}\n", self, self.bit_buffer, self.bits_in);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 
     inline fn len(self: *Self) usize {
         return self.inner.len();
     }
 
-    fn write_u64_le(self: *Self, value: u64) !void {
+    inline fn write_u64_le(self: *Self, value: u64) !void {
         //warn("Writing u64={x}\n", value);
         try self.inner.writeInt(value, builtin.Endian.Little);
     }
@@ -192,7 +349,7 @@ pub const OutputBuffer = struct {
         }
     }
 
-    fn save(self: *Self) SavedOutputBuffer {
+    inline fn save(self: *Self) SavedOutputBuffer {
         var sb = SavedOutputBuffer {
             .pos = self.inner.position(),
             .bit_buffer = self.bit_buffer,
@@ -203,7 +360,7 @@ pub const OutputBuffer = struct {
         return sb;
     }
 
-    fn load(self: *Self, saved: SavedOutputBuffer) void {
+    inline fn load(self: *Self, saved: SavedOutputBuffer) void {
         self.inner.set_position(saved.pos);
         self.bit_buffer = saved.bit_buffer;
         self.bits_in = saved.bits_in;
@@ -219,3 +376,63 @@ pub const OutputBuffer = struct {
     }
 
 };
+
+test "deriveDebug" {
+    const E = enum {
+        ONE,
+        TWO,
+        THREE,
+    };
+    const UE = union(enum) {
+        const Self = this;
+        i: isize,
+        u: usize,
+        z: E,
+
+        fn format(
+            self: *const Self,
+            comptime fmt: []const u8,
+            context: var,
+            comptime Errors: type,
+            output: fn (@typeOf(context), []const u8) Errors!void,
+        ) Errors!void {
+            return deriveDebug(context, "{}", Errors, output, self.*);
+        }
+    };
+
+    const Bob = struct {
+        const Self = this;
+
+        e: E,
+        ue: UE,
+        x: i32,
+        f: f64,
+        a: [2]u8,
+        o8: ?u8,
+        o16: ?u16,
+        e8: error!u8,
+        p8: *u8,
+        pe: *UE,
+
+        fn format(
+            self: *const Self,
+            comptime fmt: []const u8,
+            context: var,
+            comptime Errors: type,
+            output: fn (@typeOf(context), []const u8) Errors!void,
+        ) Errors!void {
+            // We hereby take over all printing...
+            return deriveDebug(context, "{}", Errors, output, self.*);
+        }
+    };
+
+    var b: u8 = 13;
+    var a = "hi";
+    var s = []u8 {0} ** 128;
+    var ue = UE {.i = 1};
+    var e = E.ONE;
+    var bob = Bob {.e = E.TWO, .ue = UE{.z=e}, .x=123, .f=1.2, .a=a, .o8=0xff, .o16=null,
+                   .e8=error.FixMe, .p8= &b, .pe=&ue};
+    warn("s='{}'\n", &bob);
+    warn("f={}\n", &ue);
+}
