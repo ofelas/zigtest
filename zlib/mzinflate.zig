@@ -2342,8 +2342,7 @@ test "Decompress.decompressor.moreinput" {
     var flags: u32 = TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
     var c = Cursor([]u8){.pos= 0, .inner = output[0..]};
     var res = decompress(&d, input[0..2], &c, flags);
-    warn("res={}\n", &res);
-    c.dump();
+    warn("res={}, c={}\n", &res, &c);
     if (res.outpos < 128) {
         warn("\n\n**  output='{}'\n", output[0..res.outpos]);
         if (mem.eql(u8, expected, output[0..res.outpos])) {

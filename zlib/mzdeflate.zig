@@ -19,6 +19,7 @@ const SavedOutputBuffer = mzutil.SavedOutputBuffer;
 const SeekFrom = mzutil.SeekFrom;
 const setmem = mzutil.setmem;
 const typeNameOf = mzutil.typeNameOf;
+const deriveDebug = mzutil.deriveDebug;
 
 // License MIT
 // From https://github.com/Frommi/miniz_oxide
@@ -262,9 +263,15 @@ const SymFreq = struct {
     key: u16,
     sym_index: u16,
 
-    fn dump(self: *const Self) void {
-        @setCold(true);
-        warn("key={x04}, sym_index={x04}\n", self.key, self.sym_index);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 };
 
@@ -305,7 +312,7 @@ fn radix_sort_symbols(symbols0: []SymFreq, symbols1: []SymFreq) []SymFreq {
     }
     if (debug) {
         for (current_symbols) |*sym, ii| {
-            warn("sym[{}]", ii); sym.*.dump();
+            warn("[{}]={}\n", ii, sym);
         }
     }
 
@@ -462,14 +469,7 @@ pub const TDEFLStatus = extern enum {
         comptime Errors: type,
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
-        // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}.{}@{x}",
-                                  typeNameOf(self.*), @ptrToInt(self), @tagName(self.*));
-        } else {
-            return std.fmt.format(context, Errors, output, "{}.{}",
-                                  typeNameOf(self.*), @tagName(self.*));
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 };
 
@@ -662,9 +662,15 @@ pub const Huffman = struct {
     dist: HuffmanEntry,
     huffcodes: HuffmanEntry,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{}\n", self);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 
     fn init () Self {
@@ -807,7 +813,7 @@ pub const Huffman = struct {
         } else {
             try rle.zero_code_size(&packed_code_sizes_cursor, self);
         }
-        if (debug) rle.dump();
+        if (debug) warn("{}\n", &rle);
 
         // WIP: Seems we are failing in this region, a problem with
         // code sizes it seems
@@ -935,10 +941,15 @@ const MatchResult = struct {
     length: u32,
     loc: u8,
 
-    fn dump(self: *const Self) void {
-        @setCold(true);
-        warn("MatchResult distance={}, length={}, loc={}\n",
-             self.distance, self.length, self.loc);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 };
 
@@ -956,12 +967,15 @@ const Dictionary = struct {
     pub lookahead_pos: u32,
     pub size: u32,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{} max_probes={}/{}\n" ++
-             "code_buf_dict_pos={}, lookahead_size={}, lookahead_pos={}, size={}",
-             self, self.max_probes[0], self.max_probes[1],
-             self.code_buf_dict_pos, self.lookahead_size, self.lookahead_pos, self.size);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 
     fn init(flags: u32) Self {
@@ -1115,12 +1129,12 @@ const Dictionary = struct {
 };
 
 test "outputbuffer and bitbuffer" {
-    var buf = []u8 {0} ** 1024;
+    var buf = []u8 {0x22} ** 1024;
     var ob: OutputBuffer = undefined;
     var cursor: Cursor([]u8) = undefined;
     cursor.init(buf[0..]);
     ob.inner = cursor; // {.pos = 0, .inner = buf[0..]};
-    cursor.dump();
+    warn("{}\n", &cursor);
     ob.local = false;
     ob.bit_buffer = 0;
     ob.bits_in = 0;
@@ -1130,10 +1144,10 @@ test "outputbuffer and bitbuffer" {
 
     var bb = BitBuffer {.bit_buffer = 0, .bits_in = 0};
     bb.put_fast(123456, 63);
-    bb.dump();
+    warn("{}\n", &bb);
 
     var r = bb.flush(&ob);
-    bb.dump();
+    warn("{}\n", &bb);
     warn("ob.len={}, ob.pos={}\n", ob.len(), ob.inner.position());
 }
 
@@ -1143,18 +1157,23 @@ const BitBuffer = struct {
     pub bit_buffer: u64,
     pub bits_in: u32,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("bit_buffer={x016}, bits_in={}\n", self.bit_buffer, self.bits_in);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
+
 
     inline fn put_fast(self: *Self, bits: u64, len: u8) void {
         // what if we want to write a complete u64?
-        //self.dump();
         //warn("BitBuffer put_fast({x016}, {})\n", bits, len);
         self.bit_buffer |= (bits << @truncate(u6, self.bits_in));
         self.bits_in += len;
-        //self.dump();
     }
 
     fn flush(self: *Self, output: *OutputBuffer) !void {
@@ -1188,10 +1207,17 @@ pub const RLE = struct {
     pub repeat_count: u32,
     pub p_code_size: u8,
 
-    fn dump(self: *const Self) void {
-        @setCold(true);
-        warn("{} z={}, rep={}, cs={}\n", self, self.z_count, self.repeat_count, self.p_code_size);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
+
 
     fn prev_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman ) !void {
         var counts = &h.huffcodes.count;
@@ -1269,10 +1295,15 @@ const Params = struct {
 
     pub local_buf: LocalBuf,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{}: flags={}, greedy_parsing={}\n",
-        self, self.flags, self.greedy_parsing);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 
     fn init(flags: u32, gzip: bool) Self {
@@ -1301,8 +1332,8 @@ const Params = struct {
 };
 
 test "Params" {
-    var p = Params.init(0);
-    p.dump();
+    var p = Params.init(0, false);
+    warn("{}\n", &p);
 }
 
 const LZ = struct {
@@ -1313,12 +1344,17 @@ const LZ = struct {
     pub num_flags_left: u32,
     pub codes: [LZ_CODE_BUF_SIZE]u8,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{}: code_position={}, flag_postion={}, total_bytes={}, num_flags_left={}, flag={x02}\n",
-             self, self.code_position, self.flag_position, self.total_bytes, self.num_flags_left, (self.get_flag()).*);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
-
+    
     fn init() Self {
         var lz = Self {
             .code_position = 1,
@@ -1373,14 +1409,19 @@ const CompressionResult = struct {
     inpos: usize,
     outpos: usize,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{}: inpos={}, outpos={}, status={},{}\n", self,
-             self.inpos, self.outpos, @enumToInt(self.status), &self.status);
-    }
-
     fn new(status: TDEFLStatus, inpos: usize, outpos: usize) Self {
         return CompressionResult {.status = status, .inpos= inpos, .outpos = outpos};
+    }
+
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 };
 
@@ -2138,10 +2179,15 @@ const Callback = struct {
     out_buf_size: ?usize,
     out: CallbackOut,
 
-    fn dump(self: *Self) void {
-        @setCold(true);
-        warn("{} in_buf_size={}, out_but_size={}\n",
-             self, self.in_buf_size, self.out_buf_size);
+    fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We hereby take over all printing...
+        return deriveDebug(context, "{}", Errors, output, self.*);
     }
 
     fn new_callback_buf(in_buf: []u8, out_buf: []u8) Self {
@@ -2345,20 +2391,20 @@ test "Cursor"  {
     var buf = []u8 {0} ** 64;
     var cursor: Cursor([]u8)  = undefined;
     cursor.init(buf[0..]);
-    cursor.dump();
+    warn("cursor={}\n", &cursor);
 
     var c1 = Cursor([]u8) { .pos = 0, .inner = buf[0..], };
-    c1.dump();
+    warn("c1={}\n", &c1);
 }
 
 test "Compress.static" {
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0), false);
     var input = "Deflate late\n";
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         // for pasting into Python zlib.decompress(<paste>)
         warn("\"");
@@ -2384,12 +2430,12 @@ test "Compress.static" {
 
 test "Compress.fast.short" {
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(1, 15, 0), false);
     var input = "Deflate late\n";
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         // for pasting into  Python zlib.decompress(<paste>), could puff it...
         warn("\"");
@@ -2415,12 +2461,12 @@ test "Compress.fast.short" {
 
 test "Compress.fast.long" {
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(1, 15, 0), false);
     var input = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|\n";
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         // for pasting into Python zlib.decompress(<paste>), could puff it...
         warn("\"");
@@ -2445,12 +2491,12 @@ test "Compress.fast.long" {
 
 test "Compress.dynamic" {
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0), false);
     var input = "Deflate late|Deflate late|Deflate late|Deflate late|Deflate late|Deflate late\n";
     if (debug) warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     /// for pasting into Python zlib.decompress(<paste>)
     warn("\"");
     for (output[0..r.outpos]) |b, i| {
@@ -2495,11 +2541,11 @@ test "Compress.File.Fast" {
     defer allocator.free(contents);
 
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(1, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(1, 15, 0), false);
 
     var output = []u8 {0} ** (8 * 1024);
     var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         warn("8) Guesstimated compression: {.02}%\n",
              (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
@@ -2547,11 +2593,11 @@ test "Compress.File.Dynamic" {
     defer allocator.free(contents);
 
     var c: Compressor = undefined;
-    c.initialize(create_comp_flags_from_zip_params(9, 15, 0));
+    c.initialize(create_comp_flags_from_zip_params(9, 15, 0), false);
 
     var output = []u8 {0} ** (6 * 1024);
     var r = c.compress(contents[0..], output[0..], TDEFLFlush.Finish);
-    r.dump();
+    warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         warn("8) Guesstimated compression: {.02}%\n",
              (100.0 * (@intToFloat(f32, r.outpos)/@intToFloat(f32, file_size))));
@@ -2626,7 +2672,8 @@ pub fn main() !void {
         const nbytes = MIN(usize, remaining, blksize);
         remaining -= nbytes;
         r = c.compress(contents[pos..pos+nbytes], output[n..], if (remaining == 0) TDEFLFlush.Finish else TDEFLFlush.Sync);
-        r.dump();
+        warn("r={}\n", &r);
+        //r.dump();
         switch (r.status) {
             TDEFLStatus.BadParam, TDEFLStatus.PutBufFailed => break,
             else => {
@@ -2682,6 +2729,7 @@ pub fn main() !void {
                 // make sure to flush the file
                 try obuf_stream.flush();
                 // gzip -v -t _test_.gz should say '_test_.gz: OK'
+                warn("{}\n", &gziphdr);
             }
 
         }

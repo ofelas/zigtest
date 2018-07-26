@@ -20,6 +20,10 @@ pub const XFL_FAST: u8 = 4;
 
 pub const DEFAULT_HEADER: [10]u8 = []const u8 {ID1, ID2, CM, 0, 0, 0, 0, 0, 0, @enumToInt(OS.Unknown)};
 
+inline fn typeNameOf(v: var) []const u8 {
+    return @typeName(@typeOf(v));
+}
+
 pub const HeaderBuffer = [10]u8;
 pub const GzipHeader = struct {
     const Self = this;
@@ -73,17 +77,19 @@ pub const GzipHeader = struct {
     ) Errors!void {
         // We ignore the actual format char for now
         if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}@{x}",
+            return std.fmt.format(context, Errors, output, "{}@{x}: ",
                                   typeNameOf(self.*), @ptrToInt(self));
         } else {
-            return std.fmt.format(context, Errors, output, "{}",
-                                  typeNameOf(self.*));
+            return std.fmt.format(context, Errors, output, "{}: ID1={x02}, ID2={x02}, CM={x02}, OS={}",
+                                  typeNameOf(self.*), self.b[0], self.b[1], self.b[2], &(@intToEnum(OS, self.b[9])));
         }
     }
 };
 
 
 pub const OS = enum(u8) {
+    const Self = this;
+
     FAT = 0, // 0 - FAT filesystem (MS-DOS, OS/2, NT/Win32)
     Amiga, // 1 - Amiga
     VMS, // 2 - VMS (or OpenVMS)
@@ -99,6 +105,23 @@ pub const OS = enum(u8) {
     QDOS, // 12 - QDOS
     AcornRISCOS, // 13 - Acorn RISCOS
     Unknown = 255, //  - unknown
+
+    pub fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We ignore the actual format char for now
+        if (fmt.len > 0) {
+            return std.fmt.format(context, Errors, output, "{}.{}@{x}",
+                                  typeNameOf(self.*), @ptrToInt(self), @tagName(self.*));
+        } else {
+            return std.fmt.format(context, Errors, output, "{}.{}",
+                                  typeNameOf(self.*), @tagName(self.*));
+        }
+    }
 };
 // CRC16
 // CRC32
