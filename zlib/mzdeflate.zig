@@ -271,7 +271,7 @@ const SymFreq = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -469,7 +469,7 @@ pub const TDEFLStatus = extern enum {
         comptime Errors: type,
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -670,7 +670,7 @@ pub const Huffman = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     fn init () Self {
@@ -949,7 +949,7 @@ const MatchResult = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -975,7 +975,7 @@ const Dictionary = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     fn init(flags: u32) Self {
@@ -1165,7 +1165,7 @@ const BitBuffer = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
 
@@ -1215,7 +1215,7 @@ pub const RLE = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
 
@@ -1303,7 +1303,7 @@ const Params = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     fn init(flags: u32, gzip: bool) Self {
@@ -1352,7 +1352,7 @@ const LZ = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
     
     fn init() Self {
@@ -1421,7 +1421,7 @@ const CompressionResult = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -2187,7 +2187,7 @@ const Callback = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     fn new_callback_buf(in_buf: []u8, out_buf: []u8) Self {
