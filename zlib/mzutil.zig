@@ -19,7 +19,11 @@ pub fn deriveDebug(
     comptime Errors: type,
     output: fn (@typeOf(context), []const u8) Errors!void,
     value: var,
+    level: usize,
 ) Errors!void {
+    if (level > 3) {
+        return output(context, "...");
+    }
     const T = @typeOf(value);
     if (T == error) {
         try output(context, "error.");
@@ -77,7 +81,7 @@ pub fn deriveDebug(
                     //if (f.enum_field) |e| {
                     //    try std.fmt.format(context, Errors, output, "({})", e.value);
                     //}
-                    try deriveDebug(context, "{}", Errors, output, @field(value, f.name));
+                    try deriveDebug(context, "{}", Errors, output, @field(value, f.name), level + 1);
                 }
             }
             return output(context, "");
@@ -96,23 +100,23 @@ pub fn deriveDebug(
                 try output(context, "." ++ f.name ++ "=");
                 //if (f.offset) |o| {
                 //try std.fmt.formatInt(o, 10, false, 0, context, Errors, output);
-                try deriveDebug(context, "{}", Errors, output, @field(value, f.name));
+                try deriveDebug(context, "{}", Errors, output, @field(value, f.name), level + 1);
                 //}
                 //try deriveDebug(context, Errors, output, @memberName(T, i));
             } else try output(context, "}");
         },
         builtin.TypeId.Optional => {
             if (value) |payload| {
-                return deriveDebug(context, "{}", Errors, output, payload);
+                return deriveDebug(context, "{}", Errors, output, payload, level + 1);
             } else {
                 return output(context, "null");
             }
         },
         builtin.TypeId.ErrorUnion => {
             if (value) |payload| {
-                return deriveDebug(context, fmt, Errors, output, payload);
+                return deriveDebug(context, fmt, Errors, output, payload, level + 1);
             } else |err| {
-                return deriveDebug(context, fmt, Errors, output, err);
+                return deriveDebug(context, fmt, Errors, output, err, level + 1);
             }
         },
         builtin.TypeId.ErrorSet => {
@@ -127,7 +131,7 @@ pub fn deriveDebug(
             //try output(context, "->");
             switch (ptr_info.size) {
                 builtin.TypeInfo.Pointer.Size.One => {
-                    return deriveDebug(context, fmt, Errors, output, value.*);
+                    return deriveDebug(context, fmt, Errors, output, value.*, level + 1);
                 },
                 builtin.TypeInfo.Pointer.Size.Many => {
                     return output(context, "Many:" ++ @typeName(@typeOf(ptr_info)));
@@ -198,7 +202,7 @@ pub const SavedOutputBuffer = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -223,7 +227,7 @@ pub fn Cursor(comptime T: type) type {
             output: fn (@typeOf(context), []const u8) Errors!void,
         ) Errors!void {
             // We hereby take over all printing...
-            return deriveDebug(context, "{}", Errors, output, self.*);
+            return deriveDebug(context, "{}", Errors, output, self.*, 0);
         }
 
         fn init(self: *Self, ary: T) void {
@@ -321,7 +325,7 @@ pub const OutputBuffer = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*);
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     inline fn len(self: *Self) usize {
@@ -396,7 +400,7 @@ test "deriveDebug" {
             comptime Errors: type,
             output: fn (@typeOf(context), []const u8) Errors!void,
         ) Errors!void {
-            return deriveDebug(context, "{}", Errors, output, self.*);
+            return deriveDebug(context, "{}", Errors, output, self.*, 0);
         }
     };
 
@@ -422,7 +426,7 @@ test "deriveDebug" {
             output: fn (@typeOf(context), []const u8) Errors!void,
         ) Errors!void {
             // We hereby take over all printing...
-            return deriveDebug(context, "{}", Errors, output, self.*);
+            return deriveDebug(context, "{}", Errors, output, self.*, 0);
         }
     };
 
