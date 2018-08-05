@@ -110,11 +110,10 @@ pub fn adler32(adler: uLong, buf: []const Bytef) uLong {
 }
 
 /// @ofelas: untested combine functions...
-fn adler32_combine_(adler1: uLong, adler2: uLong, len2: zOffset64) uLong
-{
-    sum1: uLong = undefined;
-    sum2: uLong = undefined;
-    rem: uLong = undefined;
+fn adler32_combine_(adler1: uLong, adler2: uLong, len2: zOffset64) uLong {
+    var sum1: uLong = undefined;
+    var sum2: uLong = undefined;
+    var rem: uLong = undefined;
 
     // for negative len, return invalid adler32 as a clue for debugging 
     if (len2 < 0) {
