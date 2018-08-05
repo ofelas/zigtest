@@ -659,8 +659,8 @@ pub const Header = extern struct {
     /// Sets the checksum field of this header based on the current fields in
     /// this header.
     pub fn set_cksum(self: *Self) void {
-        const cksum = self.calculate_cksum();
-        octal_into(&self.as_old_mut().cksum[0..], cksum);
+        const ck = self.calculate_cksum();
+        octal_into(&self.as_old_mut().cksum[0..], ck);
     }
 
     // fn calculate_cksum(&self) -> u32 {
@@ -1061,7 +1061,7 @@ test "Header.from_byte_slice.pax" {
 
     try oheader.set_device_major(1);
     warn("major={}, minor={}\n", oheader.device_major(), oheader.device_minor());
-    var meta = try fs.metadata("./header.zig");
+    var meta = try fs.metadata(c"./header.zig");
     oheader.fill_from(&meta, HeaderMode.Complete);
     warn("major={}, minor={}\n", oheader.device_major(), oheader.device_minor());
     oheader.hexdump();
@@ -1707,7 +1707,6 @@ pub const GnuExtSparseHeader = extern struct {
 // }
 
 fn octal_from(slice: []const u8) !u64 {
-    var trun = truncate(slice);
     //     let num = match str::from_utf8(trun) {
     //         Ok(n) => n,
     //         Err(_) => {
@@ -1717,12 +1716,12 @@ fn octal_from(slice: []const u8) !u64 {
     //             )))
     //         }
     //     };
-    const n = try std.fmt.parseInt(comptime u64: type, trun, 8);
+    // const n = try std.fmt.parseInt(u64, truncate(slice), 8);
     //     match u64::from_str_radix(num.trim(), 8) {
     //         Ok(n) => Ok(n),
     //         Err(_) => Err(other(&format!("numeric field was not a number: {}", num))),
     //     }
-    return n;
+    return std.fmt.parseInt(u64, truncate(slice), 8);
 }
 
 // fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
