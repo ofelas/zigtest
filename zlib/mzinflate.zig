@@ -3,8 +3,6 @@ const std = @import("std");
 const mem = std.mem;
 const debug = std.debug;
 const warn = debug.warn;
-const assertError = std.debug.assertError;
-const assertOrPanic = std.debug.assertOrPanic;
 const builtin = @import("builtin");
 
 const adler32 = @import("adler32.zig").adler32;
