@@ -15,43 +15,19 @@ const list = @import("jlist.zig");
 const parseUnsigned = std.fmt.parseUnsigned;
 const parseInt = std.fmt.parseInt;
 
-const fpconv_dtoa = @import("../fpconv/zfpconv.zig").zfpconv_dtoa;
+//const fpconv_dtoa = @import("../fpconv/zfpconv.zig").zfpconv_dtoa;
 const atod = @import("../fpconv/zfast_atof.zig").zatod;
 
-/// There may be a simpler way...
-var stdout_file: io.File = undefined;
-var stdout_file_out_stream: io.FileOutStream = undefined;
-var stdout_stream: ?&io.OutStream = null;
+const print = warn;
 
-pub fn print(comptime fmt: []const u8, args: ...) void {
-    const stream = getStdOutStream() catch |_| return;
-    stream.print(fmt, args) catch |_| return;
-}
-
-inline fn getStdOutStream() %&io.OutStream {
-    if (stdout_stream) |st| {
-        return st;
-    } else {
-        stdout_file = try io.getStdOut();
-        stdout_file_out_stream = io.FileOutStream.init(&stdout_file);
-        const st = &stdout_file_out_stream.stream;
-        stdout_stream = st;
-        return st;
-    }
-}
-
-fn printDouble(d: f64, stream: io.OutStream) %void {
-    var buf: [24]u8 = zeroes;
-    var sz = fpconv_dtoa(d, buf);
-    %%stream.write(buf[0 .. sz]);
-}
-
-error JsonError;
+const JsonError = error {
+    SomeError,
+};
 
 const ZJSON_NESTING_LIMIT: usize = 64;
 
 const ParseBuffer = struct {
-    const Self = this;
+    const Self = @This();
     content: []const u8,
     // We actually have the length in content.len, 8)
     length: usize,
@@ -59,16 +35,16 @@ const ParseBuffer = struct {
     depth: usize, // Recursion level, we impose an arbitrary limit
     // Maybe an allocator?
 
-    fn debug(pb: &const Self) void {
+    fn debug(pb: *const Self) void {
         print("ParseBuffer: length={}/{}, offset={} depth={}\n",
               pb.length, pb.content.len, pb.offset, pb.depth);
     }
 
-    inline fn canAccessAtIndex(pb: &Self, index: usize) bool {
+    inline fn canAccessAtIndex(pb: *const Self, index: usize) bool {
         return (pb.offset + index) < pb.content.len;
     }
 
-    inline fn charAtOffset(pb: &Self) u8 {
+    inline fn charAtOffset(pb: *const Self) u8 {
         var result: u8 = 0;
         if (pb.canAccessAtIndex(0) == true) {
             result = pb.content[pb.offset];
@@ -77,7 +53,7 @@ const ParseBuffer = struct {
         return result;
     }
 
-    inline fn advanceIfLookingAt(pb: &Self, c: u8) bool {
+    inline fn advanceIfLookingAt(pb: *Self, c: u8) bool {
         if (pb.canAccessAtIndex(0) == true and pb.charAtOffset() == c) {
             pb.offset += 1;
             return true;
@@ -86,7 +62,7 @@ const ParseBuffer = struct {
         return false;
     }
 
-    inline fn skipUtf8Bom(pb: &Self) bool {
+    inline fn skipUtf8Bom(pb: *Self) bool {
         var result = false;
         if (pb.offset == 0) {
             if (pb.canAccessAtIndex(4) == true) {
@@ -103,7 +79,8 @@ const ParseBuffer = struct {
         return result;
     }
 
-    inline fn skipWhitespace(pb: &Self) void {
+    /// skip 0x09, 0x0A, 0x0D, 0x20
+    inline fn skipWhitespace(pb: *Self) void {
         while (pb.canAccessAtIndex(0) and (pb.charAtOffset() <= 32)) {
             pb.offset += 1;
         }
@@ -115,7 +92,7 @@ const ParseBuffer = struct {
 };
 
 /// Parse a string, we must be looking at the initial '"' (double quote)
-fn parseString(pb: &ParseBuffer) bool {
+fn parseString(pb: *ParseBuffer) bool {
     var result = false;
     if (pb.advanceIfLookingAt('"') == true) {
         const startsAt = pb.offset;
@@ -139,13 +116,13 @@ fn parseString(pb: &ParseBuffer) bool {
     return result;
 }
 
-const NumericValue = struct {
-    const Self = this;
-    i: i64,
-    f: f64,
+const NumericValue = union(enum) {
+    const Self = @This();
+    Int: i64,
+    Float: f64,
 
-    fn debug(nv: &const Self) void {
-        print("NumericValue: .i={}, .f={}\n", nv.i, nv.f);
+    fn debug(nv: *const Self) void {
+        print("NumericValue: {}\n", nv);
     }
 };
 
@@ -154,7 +131,7 @@ const NumericResult = union(enum) {
  Ok: NumericValue,
 };
 
-fn parseNumeric(pb: &ParseBuffer) NumericResult {
+fn parseNumeric(pb: *ParseBuffer) NumericResult {
     var result = NumericResult {.NotOk = {}};
     var must_be_int = true;
     var dots: u16 = 0;
@@ -184,14 +161,23 @@ fn parseNumeric(pb: &ParseBuffer) NumericResult {
                 if ((digits > 0) and (dots <= 1) and (startsAt < pb.offset)) {
                     if (must_be_int == true) {
                         if (parseInt(i64, pb.content[startsAt .. pb.offset], 10)) |v| {
-                           result = NumericResult { .Ok = NumericValue { .i = v, .f = f64(v)} };
+                            result = NumericResult { .Ok = NumericValue { .Int = v } };
                         } else |err| {
                             print("ERROR: {}, parsing '{}'\n", err, pb.content[startsAt .. pb.offset]);
                         }
                     } else {
                         // parse the float
                         if (atod(pb.content[startsAt .. pb.offset])) |v| {
-                            result = NumericResult { .Ok = NumericValue { .i = i64(v), .f = v} };
+                            result = NumericResult { .Ok = NumericValue { .Float = v } };
+                            // warn("@floatToInt={} -> {}, {}\n", v, math.isNormal(v), math.isFinite(v));
+                            // if (math.isFinite(v)) {
+                            //     var val: u64 = math.maxInt(u64);
+                            //     if (@intToFloat(f64, math.maxInt(u64)) >= v) {
+                            //         warn("@floatToInt={} -> {}\n", v, @floatToInt(i64, v));
+                            //     } else {
+                            //         warn("@floatToInt={} -> {}\n", v, val);
+                            //     }
+                            // }
                         } else |err| {
                             print("ERROR: {}, parsing '{}'\n", err, pb.content[startsAt .. pb.offset]);
                         }
@@ -208,7 +194,7 @@ fn parseNumeric(pb: &ParseBuffer) NumericResult {
     return result;
 }
 
-fn parseArray(pb: &ParseBuffer) bool {
+fn parseArray(pb: *ParseBuffer) bool {
     var result = false;
     if (pb.depth >= ZJSON_NESTING_LIMIT) {
         print("ERROR: Nested too deep @ ");
@@ -259,7 +245,7 @@ fn parseArray(pb: &ParseBuffer) bool {
     return result;
 }
 
-fn parseObject(pb: &ParseBuffer) bool {
+fn parseObject(pb: *ParseBuffer) bool {
     var result = false;
     if (pb.depth >= ZJSON_NESTING_LIMIT) {
         print("ERROR: Nested too deep @ ");
@@ -323,7 +309,7 @@ fn parseObject(pb: &ParseBuffer) bool {
     return result;
 }
 
-fn parseValue(pb: &ParseBuffer) bool {
+fn parseValue(pb: *ParseBuffer) bool {
     var rv = false;
     pb.skipWhitespace();
     if (pb.canAccessAtIndex(0) == true) {
@@ -389,7 +375,7 @@ fn parseValue(pb: &ParseBuffer) bool {
 }
 
 // a not so validating JSON parser...
-fn parseJson(buf: []u8) %void {
+fn parseJson(buf: []u8) JsonError!void {
    var pb = ParseBuffer {.content = buf, .length = buf.len, .offset = 0, .depth = 0};
    pb.debug();
    if (pb.skipUtf8Bom() == true) {
@@ -404,19 +390,18 @@ fn parseJson(buf: []u8) %void {
    pb.debug();
 }
 
-pub fn main() %void {
+pub fn main() !void {
     var args = os.args();
     print("{} a test program\n", args.nextPosix());
     var i: u16 = 0;
-    _ = try getStdOutStream();
     while (args.nextPosix()) |arg| {
         print("arg[{}] = '{}'\n", i, arg);
-        var file = try io.File.openRead(arg, allocator);
+        var file = try os.File.openRead(arg);
         defer file.close();
         const file_size = try file.getEndPos();
         print("{} bytes\n", file_size);
-        var file_in_stream = io.FileInStream.init(&file);
-        var buf_stream = io.BufferedInStream.init(&file_in_stream.stream);
+        var file_in_stream = file.inStream();
+        var buf_stream = io.BufferedInStream(os.File.ReadError).init(&file_in_stream.stream);
         const st = &buf_stream.stream;
         const contents = try st.readAllAlloc(allocator, file_size + 1);
         defer allocator.free(contents);
