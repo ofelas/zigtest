@@ -13,6 +13,7 @@ const MIN = mzutil.MIN;
 const MAX = mzutil.MAX;
 const setmem = mzutil.setmem;
 const typeNameOf = mzutil.typeNameOf;
+const deriveDebug = mzutil.deriveDebug;
 
 const TINFL_STATUS_FAILED_CANNOT_MAKE_PROGRESS: i32 = -4;
 const TINFL_STATUS_BAD_PARAM: i32 = -3;
@@ -26,7 +27,7 @@ const TINFL_STATUS_HAS_MORE_OUTPUT: i32 = 2;
 //#[repr(i8)]
 //#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub const TINFLStatus = extern enum {
-    const Self = this;
+    const Self = @This();
     /// More input data was expected, but the caller indicated that there was more data, so the
     /// input stream is likely truncated.
     FailedCannotMakeProgress = TINFL_STATUS_FAILED_CANNOT_MAKE_PROGRESS,
@@ -52,13 +53,7 @@ pub const TINFLStatus = extern enum {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}.{}@{x}",
-                                  typeNameOf(self.*), @ptrToInt(self), @tagName(self.*));
-        } else {
-            return std.fmt.format(context, Errors, output, "{}.{}",
-                                  typeNameOf(self.*), @tagName(self.*));
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
 };
@@ -106,7 +101,7 @@ pub const TINFL_FLAG_COMPUTE_ADLER32: u32 = 8;
 const MIN_TABLE_SIZES : [3]u16 = []const u16 {257, 1, 4};
 
 pub const LookupResult = struct {
-    const Self = this;
+    const Self = @This();
     symbol: i32,
     code_length: u32,
 
@@ -122,20 +117,14 @@ pub const LookupResult = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}@{x}(symbol={}, code_length={})",
-                                  typeNameOf(self.*), @ptrToInt(self), self.*.symbol, self.*.code_length);
-        } else {
-            return std.fmt.format(context, Errors, output, "{}(status={}, state={})",
-                                  typeNameOf(self.*), self.*.symbol, self.*.code_length);
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
 /// A struct containing huffman code lengths and the huffman code tree used by the decompressor.
 //#[repr(C)]
 pub const HuffmanTable = struct {
-    const Self = this;
+    const Self = @This();
     /// Length of the code at each index.
     pub code_size: [MAX_HUFF_SYMBOLS_0]u8,
     /// Fast lookup table for shorter huffman codes.
@@ -217,7 +206,7 @@ pub const HuffmanTable = struct {
 //#[repr(C)]
 //#[allow(bad_style)]
 pub const Decompressor = struct {
-    const Self = this;
+    const Self = @This();
     /// Current state of the decompressor.
     state: State,
     /// Number of bits in the bit buffer.
@@ -317,7 +306,7 @@ pub const Decompressor = struct {
 //#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 //#[repr(C)]
 pub const State = extern enum {
-    const Self = this;
+    const Self = @This();
     Start = 0,
     ReadZlibCmf,
     ReadZlibFlg,
@@ -365,13 +354,7 @@ pub const State = extern enum {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}.{}@{x}",
-                                  typeNameOf(self.*), @ptrToInt(self), @tagName(self.*));
-        } else {
-            return std.fmt.format(context, Errors, output, "{}.{}",
-                                  typeNameOf(self.*), @tagName(self.*));
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
 
@@ -449,7 +432,7 @@ inline fn read_u16_le(iter: *IterBuf) u16 {
     // };
     //iter.nth(1);
     //u16::from_le(ret)
-    ret =  mem.readInt(iter.buf[iter.pos..iter.pos+@sizeOf(u16)], u16, builtin.Endian.Little);
+    ret =  mem.readIntSlice(u16, iter.buf[iter.pos..iter.pos+@sizeOf(u16)], builtin.Endian.Little);
     iter.pos += @sizeOf(u16);
     //warn("read_u16_le = {x04}\n", ret);
     return ret;
@@ -473,7 +456,7 @@ inline fn read_u32_le(iter: *IterBuf) u32 {
     // iter.nth(3);
     // u32::from_le(ret)
 
-    ret =  mem.readInt(iter.buf[iter.pos..iter.pos+@sizeOf(u32)], u32, builtin.Endian.Little);
+    ret =  mem.readIntSlice(u32, iter.buf[iter.pos..iter.pos+@sizeOf(u32)], builtin.Endian.Little);
     iter.pos += @sizeOf(u32);
     //warn("read_u32_le = {x08}\n", ret);
     return ret;
@@ -550,7 +533,7 @@ inline fn validate_zlib_header(cmf: u32, flg: u32, flags: u32, mask: usize) Acti
 }
 
 const Action = union(enum) {
-    const Self = this;
+    const Self = @This();
     None,
     Jump: State,
     End: TINFLStatus,
@@ -563,23 +546,12 @@ const Action = union(enum) {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the fmt
-        switch (self.*) {
-            Action.Jump => |*j| {
-                return std.fmt.format(context, Errors, output, "Action({}={})", @tagName(self.*), j);
-            },
-            Action.End => |*e| {
-                return std.fmt.format(context, Errors, output, "Action({}={})", @tagName(self.*), e);
-            },
-            Action.None => |_|{
-                return std.fmt.format(context, Errors, output, "Action(None)");
-            },
-            else => unreachable,
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
 const ActionOrSymbol = union(enum) {
-    const Self = this;
+    const Self = @This();
     AOSAction: Action,
     AOSSymbol: i32,
 
@@ -591,16 +563,7 @@ const ActionOrSymbol = union(enum) {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the fmt
-        switch (self.*) {
-            ActionOrSymbol.AOSAction => |*a| {
-                const addr = @returnAddress();
-                return std.fmt.format(context, Errors, output, "ActionOrSymbol({}:{})", @tagName(self.*), a);
-            },
-            ActionOrSymbol.AOSSymbol => |s| {
-                return std.fmt.format(context, Errors, output, "ActionOrSymbol({}:{})", @tagName(self.*), s);
-            },
-            else => unreachable,
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     // CHECK can't have an argument with the same name as the function
@@ -740,7 +703,7 @@ fn decode_huffman_code(
 }
 
 const IterBuf = struct {
-    const Self = this;
+    const Self = @This();
     buf: []u8,
     pos: usize,
 
@@ -752,13 +715,7 @@ const IterBuf = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}@{x}:buf.len={}, pos={}",
-                                  typeNameOf(self.*), @ptrToInt(self), self.*.buf.len, self.*.pos);
-        } else {
-            return std.fmt.format(context, Errors, output, "{}:buf.len={}, pos={}",
-                                  typeNameOf(self.*), self.*.buf.len, self.*.pos);
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
     
     inline fn next(self: *Self) ?u8 {
@@ -869,7 +826,7 @@ inline fn end_of_input(flags: u32) Action {
     else 
         TINFLStatus.FailedCannotMakeProgress
     };
-    warn("end_of_input -> {s}\n", &res);
+    //TODO warn("end_of_input -> {s}\n", &res);
     return res;
 }
 
@@ -995,7 +952,7 @@ fn init_tree(r: *Decompressor, l: *LocalVars) Action {
 
 //#[derive(Copy, Clone)]
 const LocalVars = struct {
-    const Self = this;
+    const Self = @This();
     pub bit_buf: BitBuffer,
     pub num_bits: u32,
     pub dist: u32,
@@ -1011,16 +968,7 @@ const LocalVars = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output,
-                                  "{}@{x}:bit_buf={x}, num_bits={}, dist={}, counter={}, num_extra={}, dist_from_out_buf_start={}",
-                                  typeNameOf(self.*), @ptrToInt(self), self.bit_buf, self.num_bits, self.dist, self.counter,
-                                  self.num_extra, self.dist_from_out_buf_start);
-        } else {
-            return std.fmt.format(context, Errors, output,
-                                  "{}:bit_buf={x}, num_bits={}, dist={}, counter={}, num_extra={}, dist_from_out_buf_start={}",
-                                  typeNameOf(self.*), self.bit_buf, self.num_bits, self.dist, self.counter, self.num_extra, self.dist_from_out_buf_start);
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
     
     inline fn shift(self: *const Self) u6 {
@@ -1121,7 +1069,7 @@ fn apply_match(
 }
 
 const FastResult = struct {
-    const Self = this;
+    const Self = @This();
     status: TINFLStatus,
     state: State,
 
@@ -1133,14 +1081,7 @@ const FastResult = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}@{x}(status={}, state={})",
-                                  typeNameOf(self.*), @ptrToInt(self), &self.*.status,
-                                  &self.*.state);
-        } else {
-            return std.fmt.format(context, Errors, output, "{}(status={}, state={})",
-                                  typeNameOf(self.*), &self.*.status, &self.*.state);
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 };
 
@@ -1324,7 +1265,7 @@ fn decompress_fast(
 }
 
 pub const DecompressResult = struct {
-    const Self = this;
+    const Self = @This();
     status: TINFLStatus,
     inpos: usize,
     outpos: usize,
@@ -1337,15 +1278,7 @@ pub const DecompressResult = struct {
         output: fn (@typeOf(context), []const u8) Errors!void,
     ) Errors!void {
         // We ignore the actual format char for now
-        if (fmt.len > 0) {
-            return std.fmt.format(context, Errors, output, "{}@{x}(status={}, inpos={}, outpos={})",
-                                  typeNameOf(self.*), @ptrToInt(self), &self.*.status,
-                                  self.*.inpos, self.*.outpos);
-        } else {
-            return std.fmt.format(context, Errors, output, "{}(status={}, inpos={}, outpos={})",
-                                  typeNameOf(self.*), &self.*.status,
-                                  self.*.inpos, self.*.outpos);
-        }
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
     }
 
     fn new(status: TINFLStatus, inpos: usize, outpos: usize) DecompressResult {
@@ -1427,7 +1360,7 @@ inline fn decompress_inner(
 ) DecompressResult {
     const out_buf_start_pos = out_cur.position();
     const out_buf_size_mask: usize = if ((flags & TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF) != 0) 
-        @maxValue(usize)
+        std.math.maxInt(usize)
     else
         // In the case of zero len, any attempt to write would produce HasMoreOutput,
         // so to gracefully process the case of there really being no output,

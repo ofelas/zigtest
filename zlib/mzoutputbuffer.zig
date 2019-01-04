@@ -1,12 +1,27 @@
+// -*- mode: zig; -*-
 /// A wrapper for the output slice used when decompressing.
 ///
 /// Using this rather than `Cursor` lets us implement the writing methods directly on
 /// the buffer and lets us use a usize rather than u64 for the position which helps with
 /// performance on 32-bit systems.
+
+const deriveDebug = @import("mzutil.zig").deriveDebug;
+
 pub const OutputBuffer = struct {
-    const Self = this;
+    const Self = @This();
     slice: []u8,
     pos: usize,
+
+    pub fn format(
+        self: *const Self,
+        comptime fmt: []const u8,
+        context: var,
+        comptime Errors: type,
+        output: fn (@typeOf(context), []const u8) Errors!void,
+    ) Errors!void {
+        // We ignore the actual format char for now
+        return deriveDebug(context, "{}", Errors, output, self.*, 0);
+    }
 
     //#[inline]
     pub inline fn from_slice_and_pos(slice: []u8, pos: usize) OutputBuffer {
@@ -63,3 +78,13 @@ pub const OutputBuffer = struct {
         return self.slice;
     }
 };
+
+
+test "mzoutputbuffer.dummy" {
+    const std = @import("std");
+    const warn = std.debug.warn;
+    var buffer: [256]u8 = undefined;
+    var ob = OutputBuffer.from_slice_and_pos(buffer[0..], 0);
+
+    warn("ob={}\n", ob);
+}

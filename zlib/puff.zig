@@ -804,7 +804,7 @@ pub fn puff(dest: []u8,           // pointer to destination pointer
             sourcelen: *usize) !u32 {     // amount of input available
     var s: state = undefined;             // input/output state
     var blktype: u32 = 0;          // block information
-    var err: error!u32 = 0;                    // return value
+    var err: !u32 = 0;                    // return value
 
     // initialize output state
     s.outbuf = dest;

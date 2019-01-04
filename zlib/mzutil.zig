@@ -13,6 +13,11 @@ pub inline fn typeNameOf(v: var) []const u8 {
     return @typeName(@typeOf(v));
 }
 
+pub inline fn maxValue(comptime T: type) T {
+    return std.math.maxInt(T);
+}
+
+
 pub fn deriveDebug(
     context: var,
     comptime fmt: []const u8,
@@ -25,7 +30,7 @@ pub fn deriveDebug(
         return output(context, "...");
     }
     const T = @typeOf(value);
-    if (T == error) {
+    if (T == @typeOf(error.SomeError)) {
         try output(context, "error.");
         return output(context, @errorName(value));
     }
@@ -44,43 +49,11 @@ pub fn deriveDebug(
         },
         builtin.TypeId.Enum => |v| {
             try output(context, @typeName(T) ++ ".");
-            //try output(context, @tagName(v.layout) ++ ".");
-            //try output(context, "(Enum.");
-            //try output(context, @tagName(v.layout));
-            //try output(context, ".");
-            //try output(context, @typeName(v.tag_type));
-            //try output(context, "(");
-            //try deriveDebug(context, Errors, output, @tagName(T));
-            // switch (@enumToInt(v.layout)) {
-            //     0 => {
-            //         inline for (v.fields) |f| {
-            //             if (@enumToInt(value) == f.value) {
-            //                 try output(context, f.name);
-            //                 //try std.fmt.format(context, Errors, output, "({})", @enumToInt(value));
-            //             }
-            //         }
-            //     },
-            //     else => {
-            //         return output(context, @tagName(value));
-            //     }
-            // }
             return output(context, @tagName(value));
-            //return output(context, "");
         },
         builtin.TypeId.Union => |v| {
-            try output(context, @typeName(T) ++ ".");
-            //try output(context, "(Union");
-            //try output(context, @tagName(v.layout));
-            // if (v.tag_type) |tt| {
-            //     try output(context, ".");
-            //     try output(context, @typeName(tt));
-            // }
             inline for (v.fields) |f| {
                 if (mem.eql(u8, @tagName(value), f.name)) {
-                    try output(context, f.name ++ ":");
-                    //if (f.enum_field) |e| {
-                    //    try std.fmt.format(context, Errors, output, "({})", e.value);
-                    //}
                     try deriveDebug(context, "{}", Errors, output, @field(value, f.name), level + 1);
                 }
             }
@@ -88,21 +61,12 @@ pub fn deriveDebug(
         },
         builtin.TypeId.Struct => |v| {
             try output(context, @typeName(T) ++ "{");
-            //try output(context, @tagName(v.layout));
-            // if (v.tag_type) |tt| {
-            //     try output(context, ".");
-            //     try output(context, @typeName(tt));
-            // }
             return inline for (v.fields) |f, i| {
                 if (i > 0) {
                     try output(context, ", ");
                 }
                 try output(context, "." ++ f.name ++ "=");
-                //if (f.offset) |o| {
-                //try std.fmt.formatInt(o, 10, false, 0, context, Errors, output);
                 try deriveDebug(context, "{}", Errors, output, @field(value, f.name), level + 1);
-                //}
-                //try deriveDebug(context, Errors, output, @memberName(T, i));
             } else try output(context, "}");
         },
         builtin.TypeId.Optional => {
@@ -127,8 +91,6 @@ pub fn deriveDebug(
             return std.fmt.format(context, Errors, output, "promise@{x}", @ptrToInt(value));
         },
         builtin.TypeId.Pointer => |ptr_info| {
-            //try output(context, typeNameOf(value));
-            //try output(context, "->");
             switch (ptr_info.size) {
                 builtin.TypeInfo.Pointer.Size.One => {
                     return deriveDebug(context, fmt, Errors, output, value.*, level + 1);
@@ -140,7 +102,6 @@ pub fn deriveDebug(
                     const casted_value = ([]const u8)(value);
                     return std.fmt.format(context, Errors, output, "'{}'...",
                                           casted_value[0..MIN(usize, 3, value.len)]);
-                    //return output(context, "Slice:" ++ @typeName(@typeOf(casted_value)));
                 },
                 else => {
                     return output(context, @typeName(@typeOf(ptr_info)));
@@ -148,9 +109,6 @@ pub fn deriveDebug(
             }
         },
         builtin.TypeId.Array => |info| {
-            // if (info.child == u8) {
-            //     return std.fmt.format(context, Errors, output, "'{}'", value);
-            // }
             return std.fmt.format(context, Errors, output, "[{}]{}@{x}", value.len, @typeName(T.Child), @ptrToInt(&value));
         },
         else => @compileError("Unable to format type: '" ++ @typeName(T) ++ "'"),
@@ -188,7 +146,7 @@ pub inline fn MAX(comptime T: type, a: T, b: T) T {
 }
 
 pub const SavedOutputBuffer = struct {
-    const Self = this;
+    const Self = @This();
     pub pos: usize,
     pub bit_buffer: u32,
     pub bits_in: u32,
@@ -215,7 +173,7 @@ pub const SeekFrom = union(enum) {
 
 pub fn Cursor(comptime T: type) type {
     return struct {
-        const Self = this;
+        const Self = @This();
         pos: usize,
         inner: T,
 
@@ -289,7 +247,7 @@ pub fn Cursor(comptime T: type) type {
             if ((self.inner.len - self.pos) <= @sizeOf(u64)) {
                 return error.NoSpace;
             }
-            mem.writeInt(self.inner[self.pos..self.pos+@sizeOf(u64)], value, endian);
+            mem.writeIntSlice(u64, self.inner[self.pos..self.pos+@sizeOf(u64)], value, endian);
         }
 
         fn write_one(self: *Self, c: u8) void{
@@ -311,7 +269,7 @@ pub fn Cursor(comptime T: type) type {
 }
 
 pub const OutputBuffer = struct {
-    const Self = this;
+    const Self = @This();
     pub inner: Cursor([]u8),
     pub local: bool,
     pub bit_buffer: u32,
@@ -388,7 +346,7 @@ test "deriveDebug" {
         THREE,
     };
     const UE = union(enum) {
-        const Self = this;
+        const Self = @This();
         i: isize,
         u: usize,
         z: E,
@@ -405,7 +363,7 @@ test "deriveDebug" {
     };
 
     const Bob = struct {
-        const Self = this;
+        const Self = @This();
 
         e: E,
         ue: UE,
@@ -414,7 +372,7 @@ test "deriveDebug" {
         a: [2]u8,
         o8: ?u8,
         o16: ?u16,
-        e8: error!u8,
+        //TODO e8: error.Bob!u8,
         p8: *u8,
         pe: *UE,
 
@@ -436,7 +394,8 @@ test "deriveDebug" {
     var ue = UE {.i = 1};
     var e = E.ONE;
     var bob = Bob {.e = E.TWO, .ue = UE{.z=e}, .x=123, .f=1.2, .a=a, .o8=0xff, .o16=null,
-                   .e8=error.FixMe, .p8= &b, .pe=&ue};
+                   //TODO .e8=error.FixMe,
+                   .p8= &b, .pe=&ue};
     warn("s='{}'\n", &bob);
     warn("f={}\n", &ue);
 }

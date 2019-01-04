@@ -6,6 +6,10 @@ const assert = std.debug.assert;
 
 const builtin = @import("builtin");
 
+inline fn maxValue(comptime T: type) T {
+    return std.math.maxInt(T);
+}
+
 // From https://docs.rs/lz4-compress/0.1.1/src/lz4_compress/compress.rs.html
 
 const DICTIONARY_SIZE: usize = 4096;
@@ -17,7 +21,7 @@ const Duplicate = struct {
     offset: u16,
     /// The length beyond the four first bytes.
     ///
-    /// Adding four to this number yields the actual length.
+    /// Adding four to @This() number yields the actual length.
     extra_bytes: u32,
 };
 
@@ -38,7 +42,7 @@ const Block = struct {
 
 /// An LZ4 encoder.
 const Encoder = struct {
-    const Self = this;
+    const Self = @This();
     /// The raw uncompressed input.
     input: []const u8,
     /// The compressed output.
@@ -162,7 +166,7 @@ const Encoder = struct {
             and ((self.curpos - candidate) <= 0xFFFF))
         {
             // DEBUG: warn("candidate = {x}, curpos={x}\n", candidate, self.curpos);
-            // TODO: Decipher this from rust into zig...
+            // TODO: Decipher @This() from rust into zig...
             // Calculate the "extension bytes", i.e. the duplicate bytes beyond the batch. These
             // are the number of prefix bytes shared between the match and needle.
             //     let ext = self.input[self.curpos + 4..]
@@ -335,7 +339,7 @@ const Encoder = struct {
 /// This will decode in accordance to the LZ4 format. It represents a particular state of the
 /// decompressor.
 const Decoder = struct {
-    const Self = this;
+    const Self = @This();
     /// The compressed input.
     input: []const u8,
     /// The decompressed output.
@@ -380,8 +384,8 @@ const Decoder = struct {
 
     /// Write a buffer to the output stream.
     ///
-    /// The reason this doesn't take `&mut self` is that we need partial borrowing due to the rules
-    /// of the borrow checker. For this reason, we instead take some number of segregated
+    /// The reason @This() doesn't take `&mut self` is that we need partial borrowing due to the rules
+    /// of the borrow checker. For @This() reason, we instead take some number of segregated
     /// references so we can read and write them independently.
     inline fn output(self: *Self, buf: []const u8) void {
         // We use simple memcpy to extend the vector.
@@ -417,7 +421,7 @@ const Decoder = struct {
     ///
     /// In LZ4, we encode small integers in a way that we can have an arbitrary number of bytes. In
     /// particular, we add the bytes repeatedly until we hit a non-0xFF byte. When we do, we add
-    /// this byte to our sum and terminate the loop.
+    /// @This() byte to our sum and terminate the loop.
     ///
     /// # Example
     ///
@@ -431,7 +435,7 @@ const Decoder = struct {
     inline fn read_integer(self: *Self) !usize {
         // We start at zero and count upwards.
         var n: usize = 0;
-        // If this byte takes value 255 (the maximum value it can take), another byte is read
+        // If @This() byte takes value 255 (the maximum value it can take), another byte is read
         // and added to the sum. This repeats until a byte lower than 255 is read.
         while (true) {
             // We add the next byte until we get a byte which we add to the counting variable.
@@ -521,7 +525,7 @@ const Decoder = struct {
         // ratio, we start at 4.
         var match_length = usize(4 + (self.token & 0xF));
 
-        // The intial match length can maximally be 19. As with the literal length, this indicates
+        // The intial match length can maximally be 19. As with the literal length, @This() indicates
         // that there are more bytes to read.
         if (match_length == (4 + 15)) {
             // The match length took the maximal value, indicating
@@ -533,7 +537,7 @@ const Decoder = struct {
         // allows us for storing duplicates by simply referencing the
         // other location.
 
-        // Calculate the start of this duplicate segment. We use
+        // Calculate the start of @This() duplicate segment. We use
         // wrapping subtraction to avoid overflow checks, which we
         // will catch later.
         const start = self.outpos - usize(offset);
@@ -569,7 +573,7 @@ const Decoder = struct {
     ///
     /// First, the literals are copied directly and unprocessed to the output buffer, then (after
     /// the involved parameters are read) $t_2 + 15m + c$ bytes are copied from the output buffer
-    /// at position $a + 4$ and appended to the output buffer. Note that this copy can be
+    /// at position $a + 4$ and appended to the output buffer. Note that @This() copy can be
     /// overlapping.
     //#[inline]
     fn complete(self: *Self) !void {
@@ -628,7 +632,7 @@ pub fn compress_into(input: []const u8, output: []u8) bool {
         .output = output,
         .curpos = 0,
         .outpos = 0,
-        .dict = []u32 {@maxValue(u32)} ** DICTIONARY_SIZE,
+        .dict = []u32 {maxValue(u32)} ** DICTIONARY_SIZE,
     };
 
     var r = encoder.complete();

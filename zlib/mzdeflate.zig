@@ -8,7 +8,7 @@ const assertError = std.debug.assertError;
 const assertOrPanic = std.debug.assertOrPanic;
 const builtin = @import("builtin");
 
-const crc32 = @import("crc32.zig").crc32;
+const crc32 = std.hash.crc.Crc32;
 const adler32 = @import("adler32.zig").adler32;
 const mzutil = @import("mzutil.zig");
 const Cursor = mzutil.Cursor;
@@ -20,6 +20,8 @@ const SeekFrom = mzutil.SeekFrom;
 const setmem = mzutil.setmem;
 const typeNameOf = mzutil.typeNameOf;
 const deriveDebug = mzutil.deriveDebug;
+
+const maxValue = mzutil.maxValue;
 
 // License MIT
 // From https://github.com/Frommi/miniz_oxide
@@ -240,7 +242,7 @@ pub const CompressionStrategy = extern enum {
 //#[repr(u32)]
 //#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub const TDEFLFlush = extern enum {
-    const Self = this;
+    const Self = @This();
     None = 0,
     Sync = 2,
     Full = 3,
@@ -259,7 +261,7 @@ pub const TDEFLFlush = extern enum {
 
 //#[derive(Copy, Clone)]
 const SymFreq = struct {
-    const Self = this;
+    const Self = @This();
     key: u16,
     sym_index: u16,
 
@@ -455,13 +457,12 @@ test "tdefl flush" {
 //#[repr(i32)]
 //#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub const TDEFLStatus = extern enum {
-    const Self = this;
+    const Self = @This();
     BadParam = -2,
     PutBufFailed = -1,
     Okay = 0,
     Done = 1,
 
-    //#[derive(Debug)]
     pub fn format(
         self: *const Self,
         comptime fmt: []const u8,
@@ -503,28 +504,28 @@ pub const MAX_MATCH_LEN = 258;
 
 fn write_u16_le(val: u16, slice: []u8, pos: usize) void {
     assert((@sizeOf(u16) + pos) <= slice.len);
-    mem.writeInt(slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
+    mem.writeIntSlice(u16, slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
 }
 
 fn write_u16_le_uc(val: u16, slice: []u8, pos: usize) void {
     // ptr::write_unaligned(slice.as_mut_ptr().offset(pos as isize) as *mut u16, val);
     assert((@sizeOf(@typeOf(val)) + pos) <= slice.len);
-    mem.writeInt(slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
+    mem.writeIntSlice(u16, slice[pos..pos+@sizeOf(u16)], val, builtin.Endian.Little);
 }
 
 fn read_u16_le(slice: []u8, pos: usize) u16 {
     assert(pos + 1 < slice.len);
     assert(pos < slice.len);
-    return mem.readInt(slice[pos..pos+@sizeOf(u16)], u16, builtin.Endian.Little);
+    return mem.readIntSlice(u16, slice[pos..pos+@sizeOf(u16)], builtin.Endian.Little);
 }
 
 /// A struct containing data about huffman codes and symbol frequencies.
 ///
 /// NOTE: Only the literal/lengths have enough symbols to actually use
-/// the full array. It's unclear why it's defined like this in miniz,
+/// the full array. It's unclear why it's defined like @This() in miniz,
 /// it could be for cache/alignment reasons.
 pub const HuffmanEntry = struct {
-    const Self = this;
+    const Self = @This();
     /// Number of occurrences of each symbol.
     pub count: [MAX_HUFF_SYMBOLS]u16,
     /// The bits of the huffman code assigned to the symbol
@@ -625,10 +626,10 @@ pub const HuffmanEntry = struct {
 
 };
 
-// inline makes this fail
+// inline makes @This() fail
 fn copy_from_slice(comptime D: type, dest: []D, comptime S: type, src: []S) void {
     // warn("copy_from_slice({} <- {})\n", @typeName(D), @typeName(S));
-    // choose between var runs or warn("") in the loops or else this
+    // choose between var runs or warn("") in the loops or else @This()
     // fails to do what we expect.
     // for and while has the same problem.
     var i: usize = 0;
@@ -649,7 +650,7 @@ fn copy_from_slice(comptime D: type, dest: []D, comptime S: type, src: []S) void
         //     dest[i] = src[i];
         // }
     }
-    // this if and warn must be present
+    // @This() if and warn must be present
     // release-safe -> reached unreachable code
     if (i > dest.len) {
         warn("i={}, dest.len{}\n", i, dest.len);
@@ -657,7 +658,7 @@ fn copy_from_slice(comptime D: type, dest: []D, comptime S: type, src: []S) void
 }
 
 pub const Huffman = struct {
-    const Self = this;
+    const Self = @This();
     litlen: HuffmanEntry,
     dist: HuffmanEntry,
     huffcodes: HuffmanEntry,
@@ -815,7 +816,7 @@ pub const Huffman = struct {
         }
         if (debug) warn("{}\n", &rle);
 
-        // WIP: Seems we are failing in this region, a problem with
+        // WIP: Seems we are failing in @This() region, a problem with
         // code sizes it seems
         self.huffcodes.optimize_table(MAX_HUFF_SYMBOLS_2, 7, false);
 
@@ -925,7 +926,7 @@ pub const HashBuffers = struct {
 
 
 pub const LocalBuf = struct {
-    const Self = this;
+    const Self = @This();
     pub b: [OUT_BUF_SIZE]u8,
 
     fn default() Self {
@@ -936,25 +937,25 @@ pub const LocalBuf = struct {
 };
 
 const MatchResult = struct {
-    const Self = this;
+    const Self = @This();
     distance: u32,
     length: u32,
     loc: u8,
 
-    fn format(
-        self: *const Self,
-        comptime fmt: []const u8,
-        context: var,
-        comptime Errors: type,
-        output: fn (@typeOf(context), []const u8) Errors!void,
-    ) Errors!void {
-        // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*, 0);
-    }
+    // fn format(
+    //     self: *const Self,
+    //     comptime fmt: []const u8,
+    //     context: var,
+    //     comptime Errors: type,
+    //     output: fn (@typeOf(context), []const u8) Errors!void,
+    // ) Errors!void {
+    //     // We hereby take over all printing...
+    //     return deriveDebug(context, "{}", Errors, output, self.*, 0);
+    // }
 };
 
 const Dictionary = struct {
-    const Self = this;
+    const Self = @This();
     /// The maximum number of checks in the hash chain, for the initial,
     /// and the lazy match respectively.
     pub max_probes: [2]u32,
@@ -967,16 +968,16 @@ const Dictionary = struct {
     pub lookahead_pos: u32,
     pub size: u32,
 
-    fn format(
-        self: *const Self,
-        comptime fmt: []const u8,
-        context: var,
-        comptime Errors: type,
-        output: fn (@typeOf(context), []const u8) Errors!void,
-    ) Errors!void {
-        // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*, 0);
-    }
+    // fn format(
+    //     self: *const Self,
+    //     comptime fmt: []const u8,
+    //     context: var,
+    //     comptime Errors: type,
+    //     output: fn (@typeOf(context), []const u8) Errors!void,
+    // ) Errors!void {
+    //     // We hereby take over all printing...
+    //     return deriveDebug(context, "{}", Errors, output, self.*, 0);
+    // }
 
     fn init(flags: u32) Self {
         return Dictionary {
@@ -996,7 +997,7 @@ const Dictionary = struct {
     fn read_unaligned(self: *Self, comptime T: type, pos: usize) T {
         //ptr::read_unaligned((&self.b.dict as *const [u8] as *const u8).offset(pos) as
         //                    *const T)
-        return mem.readInt(self.b.dict[pos..pos+@sizeOf(T)], T, builtin.endian);
+        return mem.readIntSlice(T, self.b.dict[pos..pos+@sizeOf(T)], builtin.endian);
     }
 
     /// Try to find a match for the data at lookahead_pos in the dictionary that is
@@ -1007,7 +1008,7 @@ const Dictionary = struct {
                   amatch_dist: u32,
                   amatch_len: u32,
     ) MatchResult {
-        // Clamp the match len and max_match_len to be valid. (It should be when this is called, but
+        // Clamp the match len and max_match_len to be valid. (It should be when @This() is called, but
         // do it for now just in case for safety reasons.)
         // This should normally end up as at worst conditional moves,
         // so it shouldn't slow us down much.
@@ -1031,9 +1032,9 @@ const Dictionary = struct {
         // # Unsafe
         // `pos` is masked by `LZ_DICT_SIZE_MASK`
         // `match_len` is clamped be at least 1.
-        // If it is larger or equal to the maximum length, this statement won't be reached.
+        // If it is larger or equal to the maximum length, @This() statement won't be reached.
         // As the size of self.dict is LZ_DICT_SIZE + MAX_MATCH_LEN - 1 + DICT_PADDING,
-        // this will not go out of bounds.
+        // @This() will not go out of bounds.
         var c01: u16 = self.read_unaligned(u16, (pos + match_len - 1));
         // Read the two bytes at the end position of the current match.
         // # Unsafe
@@ -1068,7 +1069,7 @@ const Dictionary = struct {
                     // position to match against.
                     probe_pos = next_probe_pos & LZ_DICT_SIZE_MASK;
                     // # Unsafe
-                    // See the beginning of this function.
+                    // See the beginning of @This() function.
                     // probe_pos and match_length are still both bounded.
                     // The first two bytes, last byte and the next byte matched, so
                     // check the match further.
@@ -1081,7 +1082,7 @@ const Dictionary = struct {
             if (dist == 0) {
                 return MatchResult{.distance = match_dist, .length = match_len, .loc = 3};
             }
-            // See the beginning of this function.
+            // See the beginning of @This() function.
             // probe_pos is bounded by masking with LZ_DICT_SIZE_MASK.
             if (self.read_unaligned(u16, probe_pos) != s01) {
                 continue;
@@ -1152,21 +1153,21 @@ test "outputbuffer and bitbuffer" {
 }
 
 const BitBuffer = struct {
-    const Self = this;
+    const Self = @This();
     // space for up to 8 bytes
     pub bit_buffer: u64,
     pub bits_in: u32,
 
-    fn format(
-        self: *const Self,
-        comptime fmt: []const u8,
-        context: var,
-        comptime Errors: type,
-        output: fn (@typeOf(context), []const u8) Errors!void,
-    ) Errors!void {
-        // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*, 0);
-    }
+    // fn format(
+    //     self: *const Self,
+    //     comptime fmt: []const u8,
+    //     context: var,
+    //     comptime Errors: type,
+    //     output: fn (@typeOf(context), []const u8) Errors!void,
+    // ) Errors!void {
+    //     // We hereby take over all printing...
+    //     return deriveDebug(context, "{}", Errors, output, self.*, 0);
+    // }
 
 
     inline fn put_fast(self: *Self, bits: u64, len: u8) void {
@@ -1202,21 +1203,21 @@ const BitBuffer = struct {
 
 /// Status of RLE encoding of huffman code lengths.
 pub const RLE = struct {
-    const Self = this;
+    const Self = @This();
     pub z_count: u32,
     pub repeat_count: u32,
     pub p_code_size: u8,
 
-    fn format(
-        self: *const Self,
-        comptime fmt: []const u8,
-        context: var,
-        comptime Errors: type,
-        output: fn (@typeOf(context), []const u8) Errors!void,
-    ) Errors!void {
-        // We hereby take over all printing...
-        return deriveDebug(context, "{}", Errors, output, self.*, 0);
-    }
+    // fn format(
+    //     self: *const Self,
+    //     comptime fmt: []const u8,
+    //     context: var,
+    //     comptime Errors: type,
+    //     output: fn (@typeOf(context), []const u8) Errors!void,
+    // ) Errors!void {
+    //     // We hereby take over all printing...
+    //     return deriveDebug(context, "{}", Errors, output, self.*, 0);
+    // }
 
 
     fn prev_code_size(self: *Self, packed_code_sizes: *Cursor([]u8), h: *Huffman ) !void {
@@ -1268,7 +1269,7 @@ pub const RLE = struct {
 };
 
 const Params = struct {
-    const Self = this;
+    const Self = @This();
     pub gzip: bool,
     pub flags: u32,
     pub greedy_parsing: bool,
@@ -1331,13 +1332,13 @@ const Params = struct {
     }
 };
 
-test "Params" {
-    var p = Params.init(0, false);
-    warn("{}\n", &p);
+test "mzdeflate.Params" {
+    const p = Params.init(0, false);
+    warn("{}\n", p);
 }
 
 const LZ = struct {
-    const Self = this;
+    const Self = @This();
     pub code_position: usize,
     pub flag_position: usize,
     pub total_bytes: u32,
@@ -1404,7 +1405,7 @@ test "LZ" {
 }
 
 const CompressionResult = struct {
-    const Self = this;
+    const Self = @This();
     status: TDEFLStatus,
     inpos: usize,
     outpos: usize,
@@ -1427,7 +1428,7 @@ const CompressionResult = struct {
 
 /// Main compression struct.
 pub const Compressor = struct {
-    const Self = this;
+    const Self = @This();
     lz: LZ,
     params: Params,
     huff: Huffman,
@@ -1598,7 +1599,7 @@ pub const Compressor = struct {
                             d.lz.write_code(@truncate(u8, cur_match_len - MIN_MATCH_LEN));
                             // # Unsafe
                             // code_position is checked to be smaller than the lz buffer size
-                            // at the start of this function and on every loop iteration.
+                            // at the start of @This() function and on every loop iteration.
                             //  unsafe {
                             write_u16_le_uc(@truncate(u16, cur_match_dist),
                                             d.lz.codes[0..],
@@ -1738,7 +1739,7 @@ pub const Compressor = struct {
         if (callback.in_buf) |in_buf| {
             if ((self.params.flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) != 0) {
                 if (self.params.gzip) {
-                    self.params.adler32 = crc32(self.params.adler32, in_buf[0..self.params.src_pos]);
+                    self.params.adler32 = crc32.hash(in_buf[0..self.params.src_pos]);
                 } else {
                     self.params.adler32 = adler32(self.params.adler32, in_buf[0..self.params.src_pos]);
                 }
@@ -1751,7 +1752,7 @@ pub const Compressor = struct {
         if (!flush_none and (self.dict.lookahead_size == 0) and !remaining) {
             flush = self.params.flush;
             if (self.flush_block(callback, flush)) |n| {
-                // given that we get a u32, this will never happen...investigate
+                // given that we get a u32, @This() will never happen...investigate
                 if (n < 0) {
                     res.status = self.params.prev_return_status;
                     res.inpos = self.params.src_pos;
@@ -2102,7 +2103,7 @@ pub const CallbackFunc = struct {
 };
 
 const CallbackBuf = struct {
-    const Self = this;
+    const Self = @This();
     out_buf: []u8,
 
     fn flush_output(self: *const Self, saved_output: *SavedOutputBuffer, params: *Params) u32 {
@@ -2121,7 +2122,7 @@ const CallbackBuf = struct {
             //          self.out_buf[params.out_buf_ofs..(params.out_buf_ofs + n)],
             //          params.local_buf.b[0..n]);
 
-            assert(n <= @maxValue(u32));
+            assert(n <= maxValue(u32));
             const nn = @truncate(u32, n);
             params.out_buf_ofs += nn;
             if (saved_output.*.pos != nn) {
@@ -2137,7 +2138,7 @@ const CallbackBuf = struct {
 };
 
 const CallbackOut = union(enum) {
-    const Self = this;
+    const Self = @This();
     Func: CallbackFunc,
     Buf: CallbackBuf,
 
@@ -2173,7 +2174,7 @@ const CallbackOut = union(enum) {
 };
 
 const Callback = struct {
-    const Self = this;
+    const Self = @This();
     in_buf: ?[]u8,
     in_buf_size: ?usize,
     out_buf_size: ?usize,
@@ -2414,16 +2415,16 @@ test "Compress.static" {
         warn("\"\n");
         if (true) {
             warn("decompressing should give '{}'\n", input);
-            const puff = @import("puff.zig").puff;
-            var out = []u8 {0} ** 32;
-            var outlen: usize = out.len;
-            var inlen: usize = r.outpos - 6;
-            // puff does not read the zlib header so we skip the first 2-two bytes
-            // which seems to work.
-            const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
-            warn("p={}, outlen={}\n", p, outlen);
-            assert(input.len == outlen);
-            assert(mem.eql(u8, out[0..outlen], input));
+            // const puff = @import("puff.zig").puff;
+            // var out = []u8 {0} ** 32;
+            // var outlen: usize = out.len;
+            // var inlen: usize = r.outpos - 6;
+            // // puff does not read the zlib header so we skip the first 2-two bytes
+            // // which seems to work.
+            // const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
+            // warn("p={}, outlen={}\n", p, outlen);
+            // assert(input.len == outlen);
+            // assert(mem.eql(u8, out[0..outlen], input));
         }
     }
 }
@@ -2435,7 +2436,7 @@ test "Compress.fast.short" {
     warn("Compressing '{}' {x08}, {}\n", input, adler32(1, input[0..]), input.len);
     var output = []u8 {0} ** 256;
     var r = c.compress(input[0..], output[0..], TDEFLFlush.Finish);
-    warn("r={}\n", &r);
+    //warn("r={}\n", &r);
     if (r.status == TDEFLStatus.Done or r.status == TDEFLStatus.Okay) {
         // for pasting into  Python zlib.decompress(<paste>), could puff it...
         warn("\"");
@@ -2445,16 +2446,16 @@ test "Compress.fast.short" {
         warn("\"\n");
         if (true) {
             warn("decompressing should give '{}'\n", input);
-            const puff = @import("puff.zig").puff;
-            var out = []u8 {0} ** 32;
-            var outlen: usize = out.len;
-            var inlen: usize = r.outpos - 6;
-            // puff does not read the zlib header so we skip the first 2-two bytes
-            // which seems to work.
-            const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
-            warn("p={}, outlen={}\n", p, outlen);
-            assert(input.len == outlen);
-            assert(mem.eql(u8, out[0..outlen], input));
+            // const puff = @import("puff.zig").puff;
+            // var out = []u8 {0} ** 32;
+            // var outlen: usize = out.len;
+            // var inlen: usize = r.outpos - 6;
+            // // puff does not read the zlib header so we skip the first 2-two bytes
+            // // which seems to work.
+            // const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
+            // warn("p={}, outlen={}\n", p, outlen);
+            // assert(input.len == outlen);
+            // assert(mem.eql(u8, out[0..outlen], input));
         }
     }
 }
@@ -2475,16 +2476,16 @@ test "Compress.fast.long" {
         }
         warn("\"\n");
         if (false) {
-            const puff = @import("puff.zig").puff;
-            var out = []u8 {0} ** 128;
-            var outlen: usize = out.len;
-            var inlen: usize = r.outpos - 6;
-            // puff does not read the zlib header so we skip the first 2-two bytes
-            // which seems to work.
-            const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
-            warn("p={}, outlen={}\n", p, outlen);
-            assert(input.len == outlen);
-            assert(mem.eql(u8, out[0..outlen], input));
+            // const puff = @import("puff.zig").puff;
+            // var out = []u8 {0} ** 128;
+            // var outlen: usize = out.len;
+            // var inlen: usize = r.outpos - 6;
+            // // puff does not read the zlib header so we skip the first 2-two bytes
+            // // which seems to work.
+            // const p = try puff(out[0..], &outlen, output[2..(r.outpos - 4)], &inlen);
+            // warn("p={}, outlen={}\n", p, outlen);
+            // assert(input.len == outlen);
+            // assert(mem.eql(u8, out[0..outlen], input));
         }
     }
 }
@@ -2527,14 +2528,14 @@ test "Compress.File.Fast" {
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
 
     const file_name = "adler32.zig";
-    var file = try os.File.openRead(allocator, file_name);
+    var file = try os.File.openRead(file_name);
     defer file.close();
 
     const file_size = try file.getEndPos();
 
     warn("File has {} bytes\n", file_size);
-    var file_in_stream = io.FileInStream.init(&file);
-    var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
+    var file_in_stream = file.inStream(); ///io.stream.init(file);
+    var buf_stream = io.BufferedInStream(os.File.ReadError).init(&file_in_stream.stream);
     const st = &buf_stream.stream;
     const contents = try st.readAllAlloc(allocator, file_size + 4);
     warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
@@ -2579,14 +2580,14 @@ test "Compress.File.Dynamic" {
     var raw_bytes: [16 * 1024]u8 = undefined;
     var allocator = &std.heap.FixedBufferAllocator.init(raw_bytes[0..]).allocator;
     const file_name = "adler32.zig";
-    var file = try os.File.openRead(allocator, file_name);
+    var file = try os.File.openRead(file_name);
     defer file.close();
 
     const file_size = try file.getEndPos();
 
     warn("File has {} bytes\n", file_size);
-    var file_in_stream = io.FileInStream.init(&file);
-    var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
+    var file_in_stream = file.inStream();
+    var buf_stream = io.BufferedInStream(os.File.ReadError).init(&file_in_stream.stream);
     const st = &buf_stream.stream;
     const contents = try st.readAllAlloc(allocator, file_size + 4);
     warn("contents has {} bytes, adler32={x08}\n", contents.len, adler32(1, contents[0..]));
@@ -2649,7 +2650,7 @@ pub fn main() !void {
     const file_size = try file.getEndPos();
 
     warn("File has {} bytes\n", file_size);
-    var file_in_stream = io.FileInStream.init(&file);
+    var file_in_stream = io.stream.init(&file);
     var buf_stream = io.BufferedInStream(io.FileInStream.Error).init(&file_in_stream.stream);
     const st = &buf_stream.stream;
     const contents = try st.readAllAlloc(allocator, file_size + 16);

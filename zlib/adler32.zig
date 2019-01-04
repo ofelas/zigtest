@@ -7,7 +7,7 @@
 pub const uLongf = u32;
 pub const uLong  = u32;
 pub const zSize = usize;
-pub const ULONGF_MAX = @MaxValue(@typeOf(uLongf));
+pub const ULONGF_MAX = @maxValue(@typeOf(uLongf));
 pub const Bytef = u8;
 pub const zOffset = u32;
 pub const zOffset64 = usize;
