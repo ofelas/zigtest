@@ -1,21 +1,26 @@
 // -*- mode: zig; -*-
-const io = @import("std").io;
+const std = @import("std");
+const math = std.math;
+const warn = std.debug.warn;
 
 // Loads of documentation here; http://www-igm.univ-mlv.fr/~lecroq/string/
 
-const ALPHABET_SIZE = @maxValue(u8) + 1;
+inline fn maxValue(comptime T: type) T {
+    return math.mxInt(T);
+}
 
-error PatternTooLong;
+const ALPHABET_SIZE: usize = 256;
 
-fn pre_quicksearch_badchar(needle: []const u8, needlelen: usize, qsBc: []isize) {
-    var i = usize(0);
-    for (qsBc) |*d| { *d =isize(needlelen + 1); }
+
+fn pre_quicksearch_badchar(needle: []const u8, needlelen: usize, qsBc: []usize) void {
+    var i: usize = 0;
+    for (qsBc) |*d| { d.* = needlelen + 1; }
     while (i < needlelen) : (i += 1) {
-        qsBc[needle[i]] = isize(needlelen - i);
+        qsBc[needle[i]] = needlelen - i;
     }
 }
 
-fn matches(a: []const u8, b: []const u8, sz: usize) -> bool {
+fn matches(a: []const u8, b: []const u8, sz: usize) bool {
     { var pos = usize(0);
         while (pos < sz) : (pos += 1) {
             if (a[pos] != b[pos]) return false;
@@ -24,7 +29,7 @@ fn matches(a: []const u8, b: []const u8, sz: usize) -> bool {
     return true;
 }
 
-pub fn quicksearch(needle: []const u8, nlen: usize, haystack: []const u8, hlen: usize) -> isize {
+pub fn quicksearch(needle: []const u8, nlen: usize, haystack: []const u8, hlen: usize) isize {
     if (nlen > hlen) return isize(-2);
 
     var qsBc: [ALPHABET_SIZE]isize = undefined; // costly but safe?
@@ -54,34 +59,47 @@ pub fn quicksearch(needle: []const u8, nlen: usize, haystack: []const u8, hlen: 
     return isize(-1);
 }
 
-pub const QuickSearch =  extern struct {
-    badchar: [ALPHABET_SIZE]isize,
-    searchpos: isize,
-    pub patternlen: isize,
+pub const QuickSearch = struct {
+    const Self = @This();
 
-    pub fn init(qs: &QuickSearch, pattern: []u8) -> %void {
-        if (pattern.len > @maxValue(isize)) return error.PatternTooLong;
-        pre_quicksearch_badchar(pattern, pattern.len, qs.badchar);
-        qs.searchpos = 0;
-        qs.patternlen = isize(pattern.len);
+    badchar: [ALPHABET_SIZE]usize,
+    searchpos: usize,
+    pub patternlen: usize,
+
+    pub fn init(pattern: []const u8) QuickSearch {
+        var qs = QuickSearch {.badchar = undefined,
+                              .searchpos = 0,
+                              .patternlen = pattern.len};
+        pre_quicksearch_badchar(pattern, pattern.len, qs.badchar[0..]);
+
+        return qs;
     }
 
-    pub fn search(qs: &QuickSearch, needle: []u8, haystack: []u8) -> isize {
+    pub fn search(qs: *Self, needle: []const u8, haystack: []const u8) !usize {
         // Searching
-        const nlen = isize(needle.len);
-        const endpos = isize(haystack.len) - nlen;
-        if ((needle.len == 0) or (haystack.len < needle.len)) return -1;
+        const nlen = needle.len;
+        const endpos = haystack.len - nlen;
+        if ((needle.len == 0) or (haystack.len < needle.len)) return error.BadLength;
         while (qs.searchpos <= endpos) {
-            if (matches(needle, haystack[usize(qs.searchpos) .. ], usize(nlen)))
+            if (matches(needle, haystack[qs.searchpos .. ], nlen))
             {
                 const ret = qs.searchpos;
                 qs.searchpos += nlen;
                 return ret;
             }
             // shift
-            qs.searchpos += qs.badchar[haystack[usize(qs.searchpos + isize(nlen))]];
+            qs.searchpos += qs.badchar[haystack[qs.searchpos + nlen]];
         }
 
-        return isize(-1);
+        return error.NotFound;
     }
 };
+
+test "quicksearch.dummy" {
+    var qs = QuickSearch.init("reading");
+
+    while (qs.search("reading", "I was reading about it while someone else was reading about simeting else"))  |pos| {
+        warn("Found at {}\n", pos);
+    } else |err| {
+    }
+}
