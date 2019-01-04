@@ -362,6 +362,8 @@ test "deriveDebug" {
         }
     };
 
+    const SomeError = error {AnotherError,}; 
+
     const Bob = struct {
         const Self = @This();
 
@@ -372,7 +374,7 @@ test "deriveDebug" {
         a: [2]u8,
         o8: ?u8,
         o16: ?u16,
-        //TODO e8: error.Bob!u8,
+        e8: SomeError!u8,
         p8: *u8,
         pe: *UE,
 
@@ -394,7 +396,7 @@ test "deriveDebug" {
     var ue = UE {.i = 1};
     var e = E.ONE;
     var bob = Bob {.e = E.TWO, .ue = UE{.z=e}, .x=123, .f=1.2, .a=a, .o8=0xff, .o16=null,
-                   //TODO .e8=error.FixMe,
+                   .e8= error.AnotherError,
                    .p8= &b, .pe=&ue};
     warn("s='{}'\n", &bob);
     warn("f={}\n", &ue);
