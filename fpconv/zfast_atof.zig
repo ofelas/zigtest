@@ -1,4 +1,4 @@
-// -*- indent-tabs-mode: nil; -*-
+// -*- mode:zig; indent-tabs-mode: nil; -*-
 // Simple and fast atof (ascii to float) function.
 //
 // - Executes about 5x faster than standard MSCRT library atof().
@@ -10,10 +10,11 @@
 // 09-May-2009 Tom Van Baak (tvb) www.LeapSecond.com
 //
 
-//#define white_space(c) ((c) == ' ' || (c) == '\t')
-inline fn white_space(c: u8) bool { return c == ' ' or c == '\t'; }
+const warn = @import("std").debug.warn;
 
-//#define valid_digit(c) ((c) >= '0' || (c) <= '9')
+
+
+inline fn white_space(c: u8) bool { return c == ' ' or c == '\t'; }
 inline fn valid_digit(c: u8) bool { return '0' <= c and c <= '9'; }
 
 pub const FpConvError = error {
@@ -27,6 +28,7 @@ pub fn zatod(p: []const u8) !f64 {
     var scale: f64 = 1.0;
     var idx: usize = 0;
     const end = p.len;
+    //warn("p={}, {}\n", p, p.len);
 
     // Skip leading white space, if any.
     while ((idx < end) and white_space(p[idx])) : (idx += 1) {}
@@ -43,15 +45,15 @@ pub fn zatod(p: []const u8) !f64 {
 
     // Get digits before decimal point or exponent, if any.
     while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
-       value = value * 10.0 + f64(p[idx] - '0');
+       value = value * 10.0 + @intToFloat(f64, p[idx] - '0');
     }
 
     // Get digits after decimal point, if any.
-    if (p[idx] == '.') {
+    if (idx < end and p[idx] == '.') {
         var pow10: f64 = 10.0;
         idx += 1;
         while ((idx < end) and (valid_digit(p[idx]))) : (idx += 1) {
-            value += f64(p[idx] - '0') / pow10;
+            value += @intToFloat(f64, p[idx] - '0') / pow10;
             pow10 *= 10.0;
         }
     }
@@ -77,7 +79,7 @@ pub fn zatod(p: []const u8) !f64 {
                     expon = (expon * 10) + @typeOf(expon)(p[idx] - '0');
                 }
             }
-            //if (expon > 308) expon = 308;
+            if (expon > 308) expon = 308;
 
             // Calculate scaling factor.
             while (expon >= 50) { scale *= 1E50; expon -= 50; }
@@ -88,6 +90,7 @@ pub fn zatod(p: []const u8) !f64 {
 
     // We should have consumed everything
     if (idx != end) {
+        //warn("p={}, idx={}, end={}\n", p, idx, end);
         return FpConvError.BadFloatString;
     } else {
         // Return signed and scaled floating point result.
