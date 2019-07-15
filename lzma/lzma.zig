@@ -99,7 +99,7 @@ pub const LZCircularBuffer = struct { //<'a, W>
 
     // Append a literal
     fn append_literal(self: *Self, lit: u8) !void {
-        warn("len={}, cursor={}, lit={}/{c}\n", self.len, self.cursor, lit, lit);
+        //warn("len={}, cursor={}, lit={}/{c}\n", self.len, self.cursor, lit, lit);
         self.buf[self.cursor] = lit;
         self.cursor += 1;
         self.len += 1;
@@ -129,7 +129,7 @@ pub const LZCircularBuffer = struct { //<'a, W>
         var i: @typeOf(plen) = 0;
         while (i < plen) : (i += 1) {
             const x = self.buf[offset];
-            warn("Append {}/{c}\n", x, x);
+            //warn("Append {}/{c}\n", x, x);
             try self.append_literal(x);
             offset += 1;
             if (offset == self.dict_size) {
@@ -286,7 +286,7 @@ pub fn Decoder(comptime T: type, ) type {
                 // TODO: assumes pb = 2 ??
                 if ((try rcoder.decode_bit(&self.is_match[(self.state << 4) + pos_state])) == 0) {
                     const byte: u8 = try self.decode_literal(rcoder);
-                    warn("Literal: {}/{c}\n", byte, byte);
+                    //warn("Literal: {}/{c}\n", byte, byte);
                     try self.output.append_literal(byte);
 
                     self.state = if (self.state < 4) 0 else if (self.state < 10) self.state - 3
@@ -416,14 +416,14 @@ pub fn Decoder(comptime T: type, ) type {
         fn decode_distance(self: *Self, rcoder: *RangeDecoder, length: usize) !usize {
             const len_state = if (length > 3) @typeOf(length)(3) else length;
             const pos_slot = usize(try self.pos_slot_decoder[len_state].parse(rcoder));
-            warn("length={}, len_state={}, pos_slot={}\n", length, len_state, pos_slot);
+            //warn("length={}, len_state={}, pos_slot={}\n", length, len_state, pos_slot);
             if (pos_slot < 4) {
                 return pos_slot;
             }
 
             const num_direct_bits = (pos_slot >> 1) - 1;
             var result = (usize(2) ^ (pos_slot & 1)) << @truncate(u6, num_direct_bits);
-            warn("num_direct_bits={}, result={}\n", num_direct_bits, result);
+            //warn("num_direct_bits={}, result={}\n", num_direct_bits, result);
 
             if (pos_slot < 14) {
                 result += usize(
