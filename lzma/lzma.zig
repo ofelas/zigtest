@@ -266,7 +266,7 @@ test "LZMA.decompress.attempt3" {
     const params = try LZMAParams.read_header(test_data[0..]);
     var outbuf = [_]u8{0} ** 256;
     var output = DummyOutStream.new(outbuf[0..]);
-    var buffer = [_]u8{0} ** 8192;
+    var buffer = [_]u8{0} ** (32 * 1024);
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
     var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
@@ -275,9 +275,53 @@ test "LZMA.decompress.attempt3" {
     try decoder.process(&rycoder);
     try decoder.output.finish();
 
+    warn("params={}\n", params);
     warn("decoder.output.stream='{}'\n", decoder.output.stream);
     assert(mem.eql(u8, decoder.output.stream.buf[0..31],
                    "dog dog dog dog dog dog dog dog"));
+}
+
+test "LZMA.decompress.attempt4" {
+    //lzma.compress("The quick brown fox jumps over the lazy dog", {"format": "alone", "level":6})
+    var test_data = "]\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00*\x1a\x08\xa2\x03%f\xf1Kx\xc5\xa2\x05\xff.\xe6\xd9\xd2 \x1a\xad4\xf8\xe2\x1d\xe8A6\xfa\xdc\x06i\xbb<\xe4\x104'\t\xeb\xb3f\xec\x1a\x17/\xff\xfc\xce\x90\x00";
+    const params = try LZMAParams.read_header(test_data[0..]);
+    var outbuf = [_]u8{0} ** 256;
+    var output = DummyOutStream.new(outbuf[0..]);
+    var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
+    var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
+    var decoder = Decoder(LZCircularBuffer).init(cb, params);
+    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var rycoder = try RangeDecoder.new(&instream);
+
+    try decoder.process(&rycoder);
+    try decoder.output.finish();
+
+    warn("params={}\n", params);
+    warn("decoder.output.stream='{}'\n", decoder.output.stream);
+    assert(mem.eql(u8, decoder.output.stream.buf[0..43],
+                   "The quick brown fox jumps over the lazy dog"));
+}
+
+test "LZMA.decompress.attempt5" {
+    //lzma.compress("The quick brown fox jumps over the lazy dog, The quick brown fox jumps over the lazy dog",
+    //              {"format": "alone", "level":9})
+    var test_data = "]\x00\x00\x00\x04\xff\xff\xff\xff\xff\xff\xff\xff\x00*\x1a\x08\xa2\x03%f\xf1Kx\xc5\xa2\x05\xff.\xe6\xd9\xd2 \x1a\xad4\xf8\xe2\x1d\xe8A6\xfa\xdc\x06i\xbb<\xe4\x104'\t\xeb\xb3f\xe3\xd4q:\xfaH\x93\t\xa7\xff\xfak`\x00";
+    const params = try LZMAParams.read_header(test_data[0..]);
+    var outbuf = [_]u8{0} ** 256;
+    var output = DummyOutStream.new(outbuf[0..]);
+    var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
+    var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
+    var decoder = Decoder(LZCircularBuffer).init(cb, params);
+    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var rycoder = try RangeDecoder.new(&instream);
+
+    try decoder.process(&rycoder);
+    try decoder.output.finish();
+
+    warn("params={}\n", params);
+    warn("decoder.output.stream='{}'\n", decoder.output.stream);
+    assert(mem.eql(u8, decoder.output.stream.buf[0..43+43+2],
+                   "The quick brown fox jumps over the lazy dog, The quick brown fox jumps over the lazy dog"));
 }
 
 
