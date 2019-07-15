@@ -75,26 +75,26 @@ pub const RangeDecoder = struct {
 
     // #[inline]
     fn normalize(self: *Self) !void {
-        warn("{{ range: {x:08}, code: {x:08}}}\n", self.range, self.code);
+        //warn("{{ range: {x:08}, code: {x:08}}}\n", self.range, self.code);
         if (self.range < 0x1000000) {
             self.range <<= 8;
-            const tmp = try self.stream.read_u8();
-            self.code = (self.code << 8) ^ (u32(tmp));
+            const tmp = u32(try self.stream.read_u8());
+            self.code = (self.code << 8) ^ tmp;
 
-            warn("+ {{ range: {x:08}, code: {x:08}}}\n", self.range, self.code);
+            //warn("+ {{ range: {x:08}, code: {x:08}}}\n", self.range, self.code);
         }
     }
 
     // #[inline]
-    fn get_bit(self: *Self) !bool {
+    fn get_bit(self: *Self) !u1 {
         self.range >>= 1;
 
         if (self.code == self.range) {
             return error.CorruptRangeCoding;
         }
 
-        const bit = self.code > self.range;
-        if (bit) {
+        const bit = @boolToInt(self.code > self.range);
+        if (bit == 1) {
             self.code -= self.range;
         }
 
@@ -107,42 +107,42 @@ pub const RangeDecoder = struct {
         var result: u32 = 0;
         var i: @typeOf(count) = 0;
         while (i < count) : (i += 1) {
-            const bit = @typeOf(result)(@boolToInt(try self.get_bit()));
+            const bit = @typeOf(result)(try self.get_bit());
             result = (result << 1) ^ bit;
         }
         return result;
     }
 
     // #[inline]
-    pub fn decode_bit(self: *Self, prob: *u16) !bool {
-        const bound: u32 = (self.range >> 11) *% (u32(prob.*));
+    pub fn decode_bit(self: *Self, prob: *u16) !u1 {
+        const bound: u32 = (self.range >> 11) * (u32(prob.*));
 
-        warn(" bound: {x:08}, prob: {x:04}, bit: {}", bound, prob.*, (self.code > bound));
+        //warn(" bound: {x:08}, prob: {x:04}, bit: {}", bound, prob.*, (self.code > bound));
         if (self.code < bound) {
-            prob.* += (0x800 -% prob.*) >> 5;
+            prob.* += (0x800 - prob.*) >> 5;
             self.range = bound;
 
             try self.normalize();
-            return false;
+            return 0;
         } else {
             prob.* -= prob.* >> 5;
             self.code -= bound;
             self.range -= bound;
 
             try self.normalize();
-            return true;
+            return 1;
         }
     }
 
     fn parse_bit_tree(self: *Self, num_bits: usize, probs: []u16) !u32 {
         var tmp: u32 = 1;
         var cnt: @typeOf(num_bits) = 0;
-        warn("probs.len={}, num_bits={}\n", probs.len, num_bits);
+        //warn("probs.len={}, num_bits={}\n", probs.len, num_bits);
         while (cnt < num_bits) : (cnt += 1) {
-            const bit = @typeOf(tmp)(@boolToInt(try self.decode_bit(&probs[tmp])));
+            const bit = @typeOf(tmp)(try self.decode_bit(&probs[tmp]));
             tmp = (tmp << 1) ^ bit;
         }
-        warn("num_bits={}, cnt={}, tmp={}\n", num_bits, cnt, tmp);
+        //warn("num_bits={}, cnt={}, tmp={}\n", num_bits, cnt, tmp);
         return tmp - (u32(1) << @truncate(u5, num_bits));
     }
 
@@ -157,8 +157,8 @@ pub const RangeDecoder = struct {
         var i: @typeOf(num_bits) = 0;
         while (i < num_bits) : (i += 1) {
             const bit = try self.decode_bit(&probs[offset + tmp]);
-            tmp = (tmp << 1) ^ (usize(@boolToInt(bit)));
-            result ^= (u32(@boolToInt(bit))) << @truncate(u5, i);
+            tmp = (tmp << 1) ^ (usize(bit));
+            result ^= (u32(bit)) << @truncate(u5, i);
         }
         return result;
      }
@@ -173,8 +173,8 @@ test "RangeDecoder.001" {
 
     var ifo = dec.is_finished_ok();
     warn("ifo={}\n", ifo);
-    ifo = try dec.decode_bit(&prob);
-    warn("ifo={}\n", ifo);
+    var bit = try dec.decode_bit(&prob);
+    warn("bit={}\n", bit);
 }
 
 // TODO: parametrize by constant and use [u16; 1 << num_bits] as soon as Rust supports this
@@ -192,12 +192,12 @@ pub fn BitTree(comptime N: usize) type {
             return bt;
         }
 
-        pub fn parse(self: *Self, rangecoder: *RangeDecoder) !u32 {
-            return rangecoder.parse_bit_tree(self.num_bits, self.probs[0..]);
+        pub fn parse(self: *Self, rcoder: *RangeDecoder) !u32 {
+            return rcoder.parse_bit_tree(self.num_bits, self.probs[0..]);
         }
 
-        pub fn parse_reverse(self: *Self, rangecoder: *RangeDecoder) !u32 {
-            return rangecoder.parse_reverse_bit_tree(self.num_bits, self.probs[0..], 0);
+        pub fn parse_reverse(self: *Self, rcoder: *RangeDecoder) !u32 {
+            return rcoder.parse_reverse_bit_tree(self.num_bits, self.probs[0..], 0);
         }
     };
 }
@@ -225,14 +225,17 @@ pub fn LenDecoder(comptime N: usize, comptime M: usize) type {
                          .high_coder = BitTree(M).init()};
         }
 
-        pub fn decode(self: *Self, rangecoder: *RangeDecoder, pos_state: usize) !usize {
-            if (! try rangecoder.decode_bit(&self.choice)) {
-                return usize(try self.low_coder[pos_state].parse(rangecoder));
+        pub fn decode(self: *Self, rcoder: *RangeDecoder, pos_state: usize) !usize {
+            // 0
+            if ((try rcoder.decode_bit(&self.choice)) == 0) {
+                return usize(try self.low_coder[pos_state].parse(rcoder));
             } else {
-                if (! try rangecoder.decode_bit(&self.choice2)) {
-                    return usize(try self.mid_coder[pos_state].parse(rangecoder)) + 8;
+                // 1 0
+                if ((try rcoder.decode_bit(&self.choice2)) == 0){
+                    return usize(try self.mid_coder[pos_state].parse(rcoder)) + 8;
                 } else {
-                    return usize(try self.high_coder.parse(rangecoder)) + 16;
+                    // 1 1
+                    return usize(try self.high_coder.parse(rcoder)) + 16;
                 }
             }
         }
