@@ -260,7 +260,7 @@ test "Encoder.from_stream" {
 
 test "Encoder.process" {
     var buf = [_]u8{0} ** 256;
-    var input = "The quick brown fox jumps over the lazy dog";
+    var input = "The quick brown fox jumps over the lazy";
     // Should get something like;
     // 5d00000400ffffffffffffffff002a1a08a2032566f14b78c5a205ff2ee6d9d2201aad34f8e21de84136fadc0669
     // bb3ce410342709ebb366ec1a172ffffcce9000

@@ -9,39 +9,7 @@ const assertError = std.debug.assertError;
 const assertOrPanic = std.debug.assertOrPanic;
 const builtin = @import("builtin");
 
-pub const DummyInStream = struct {
-    const Self = @This();
-
-    buf: []u8,
-    pos: usize,
-
-    pub fn new(buf: []u8) Self {
-        return DummyInStream {.buf = buf, .pos = 0};
-    }
-
-    pub fn read_u8(self: *Self) !u8 {
-        if (self.pos < self.buf.len) {
-            self.pos += @sizeOf(u8);
-            return self.buf[self.pos - 1];
-        } else {
-            return error.NoMoreData;
-        }
-    }
-
-    pub fn read_u32(self: *Self, endian: builtin.Endian) !u32 {
-        if (self.pos < (self.buf.len - @sizeOf(u32))) {
-            const v = mem.readIntSlice(u32, self.buf[self.pos..], endian);
-            self.pos += @sizeOf(u32);
-            return v;
-        } else {
-            return error.NoMoreData;
-        }
-    }
-
-    pub fn is_eof(self: *Self) bool {
-        return (self.pos >= self.buf.len) or (self.buf[self.pos] == 0);
-    }
-};
+pub const DummyInStream = @import("lzstream.zig").DummyInStream;
 
 
 pub const RangeDecoder = struct {
@@ -210,18 +178,20 @@ test "BitTree.init" {
 }
 
 pub fn LenDecoder(comptime N: usize, comptime M: usize) type {
+    const LOW_MID_TREES = 16;
+    const DEFAULT_PROB = 0x400;
     return struct {
         const Self = @This();
         choice: u16,
         choice2: u16,
-        low_coder: [16]BitTree(N),
-        mid_coder: [16]BitTree(N),
+        low_coder: [LOW_MID_TREES]BitTree(N),
+        mid_coder: [LOW_MID_TREES]BitTree(N),
         high_coder: BitTree(M),
 
         pub fn init() Self {
-            return Self {.choice = 0x400, .choice2 = 0x400,
-                         .low_coder = [_]BitTree(N) {BitTree(N).init()} ** 16,
-                         .mid_coder = [_]BitTree(N) {BitTree(N).init()} ** 16,
+            return Self {.choice = DEFAULT_PROB, .choice2 = DEFAULT_PROB,
+                         .low_coder = [_]BitTree(N) {BitTree(N).init()} ** LOW_MID_TREES,
+                         .mid_coder = [_]BitTree(N) {BitTree(N).init()} ** LOW_MID_TREES,
                          .high_coder = BitTree(M).init()};
         }
 

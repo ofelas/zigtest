@@ -14,140 +14,11 @@ const builtin = @import("builtin");
 
 const rangecoder = @import("rangecoder.zig");
 const RangeDecoder = rangecoder.RangeDecoder;
+const DummyOutStream = @import("lzstream.zig").DummyOutStream;
+const DummyInStream = @import("lzstream.zig").DummyInStream;
+const LZCircularBuffer = @import("lzbuffers.zig").LZCircularBuffer;
 
 const crc32 = std.hash.crc.Crc32;
-
-//
-
-pub const DummyOutStream = struct {
-    const Self = @This();
-
-    pos: usize,
-    buf: []u8,
-
-    /// Make a new stream (actually a fixed buffer for now)
-    pub fn new(buf: []u8) Self {
-        return Self {.buf = buf, .pos = 0};
-    }
-
-    pub fn write_all(self: *Self, buf: []u8) !void {
-        // copy from slice to self.buf and update pos
-        warn("write_all: {} [{}], buf.len={}\n", self, self.buf.len, buf.len);
-        if ((self.buf.len - self.pos) > buf.len) {
-            mem.copy(u8, self.buf[self.pos..], buf);
-            self.pos += buf.len;
-            return;
-        }
-        return error.NoMoreSpace;
-    }
-
-    /// Flush the output
-    /// Ideally a bit smarter than this eventually...
-    pub fn flush(self: *Self) !void {
-        warn("Flushing {}\n", self);
-        if (self.pos == 0) {
-            return error.MissingImplementation;
-        }
-        self.pos = 0;
-    }
-};
-
-// A circular buffer for LZ sequences
-pub const LZCircularBuffer = struct { //<'a, W>
-    const Self = @This();
-    
-    stream: DummyOutStream,      // &'a mut W, // Output sink
-    buf: []u8,         //Vec<u8>,      // Circular buffer
-    dict_size: usize,  // Length of the buffer
-    cursor: usize,     // Current position
-    len: usize,        // Total number of bytes sent through the buffer
-
-    pub fn from_buffer(stream: DummyOutStream, dict_size: usize, buf: []u8) Self {
-        return Self {.stream = stream, .buf = buf, .dict_size = dict_size, .cursor = 0, .len = 0};
-    }
-
-    pub fn length(self: *const Self) usize {
-        return self.buf.len;
-    }
-
-    // Retrieve the last byte or return a default
-    pub fn last_or(self: *const Self, lit: u8) u8 {
-        //warn("last_or: lit={}, {}\n", lit, self);
-        if (self.len == 0) {
-            return lit;
-        } else {
-            return self.buf[(self.dict_size + self.cursor - 1) % self.dict_size];
-        }
-    }
-
-    // Retrieve the n-th last byte
-    fn last_n(self: *const Self, dist: usize) !u8 {
-        if (dist > self.dict_size) {
-            warn("Match distance {} is beyond dictionary size {}",
-                 dist, self.dict_size);
-            return error.MatchDistanceLargerThanDictionary;
-        }
-        if (dist > self.len) {
-            warn("Match distance {} is beyond output size {}",
-                 dist, self.len);
-            return error.MatchDistanceLargerThanOutput;
-        }
-
-        const offset = (self.dict_size + self.cursor - dist) % self.dict_size;
-        return self.buf[offset];
-    }
-
-    // Append a literal
-    fn append_literal(self: *Self, lit: u8) !void {
-        //warn("len={}, cursor={}, lit={}/{c}\n", self.len, self.cursor, lit, lit);
-        self.buf[self.cursor] = lit;
-        self.cursor += 1;
-        self.len += 1;
-
-        // Flush the circular buffer to the output
-        if (self.cursor == self.dict_size) {
-            try self.stream.write_all(self.buf);
-            self.cursor = 0;
-        }
-    }
-
-    // Fetch an LZ sequence (length, distance) from inside the buffer
-    fn append_lz(self: *Self, plen: usize, dist: usize) !void {
-        //warn("LZ {{ len: {}, dist: {} }}\n", plen, dist);
-        if (dist > self.dict_size) {
-            warn("LZ distance {} is beyond dictionary size {}\n",
-                 dist, self.dict_size);
-            return error.MatchDistanceLargerThanDictionary;
-        }
-        if (dist > self.len) {
-            warn("LZ distance {} is beyond output size {}\n",
-                 dist, self.len);
-            return error.MatchDistanceLargerThanOutput;
-        }
-
-        var offset = (self.dict_size + self.cursor - dist) % self.dict_size;
-        var i: @typeOf(plen) = 0;
-        while (i < plen) : (i += 1) {
-            const x = self.buf[offset];
-            //warn("Append {}/{c}\n", x, x);
-            try self.append_literal(x);
-            offset += 1;
-            if (offset == self.dict_size) {
-                offset = 0;
-            }
-        }
-    }
-    
-    // Flush the buffer to the output
-    fn finish(self: *Self) !void {
-        if (self.cursor > 0) {
-            try self.stream.write_all(self.buf[0..self.cursor]);
-            try self.stream.flush();
-        }
-    }
-};
-
-//
 
 pub const LZMAParams = struct {
     // most lc significant bits of previous byte are part of the literal context
@@ -466,7 +337,7 @@ test "LZMA.decompress.worked" {
     var buffer = [_]u8{0} ** 8192;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -486,7 +357,7 @@ test "LZMA.decompress.attempt2" {
     var buffer = [_]u8{0} ** 8192;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -506,7 +377,7 @@ test "LZMA.decompress.attempt3" {
     var buffer = [_]u8{0} ** (32 * 1024);
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -527,7 +398,7 @@ test "LZMA.decompress.attempt4" {
     var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -549,7 +420,7 @@ test "LZMA.decompress.attempt5" {
     var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -569,7 +440,7 @@ test "LZMA.decompress.attempt6" {
     var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -719,7 +590,7 @@ test "LZMA.decompress.attempt7" {
     var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..params.dict_size]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
@@ -1248,7 +1119,7 @@ test "LZMA.decompress.attempt7" {
     var buffer = [_]u8{0} ** (32 * 1024);  // probably needs to use params.dict_size;
     var cb = LZCircularBuffer.from_buffer(output, params.dict_size, buffer[0..params.dict_size]);
     var decoder = Decoder(LZCircularBuffer).init(cb, params);
-    var instream = rangecoder.DummyInStream.new(test_data[params.pos .. ]);
+    var instream = DummyInStream.new(test_data[params.pos .. ]);
     var rycoder = try RangeDecoder.new(&instream);
 
     try decoder.process(&rycoder);
