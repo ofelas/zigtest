@@ -67,7 +67,7 @@ pub const LZAccumBuffer = struct {
 
     // Append a literal
     fn append_literal(self: *Self, lit: u8) !void {
-        if (self.cursor >= self.buf.len) {
+        if (self.len >= self.buf.len) {
             return error.NoMoreSpace;
         }
         self.buf[self.len] = lit;

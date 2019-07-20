@@ -27,7 +27,7 @@ pub const RangeDecoder = struct {
         };
         const byte = try dec.stream.read_u8();
         dec.code = try dec.stream.read_u32(builtin.Endian.Big);
-        warn("New {}\n", dec);
+        warn("New RangeDecoder range={}, code={}\n", dec.range, dec.code);
 
         if ((byte != 0) or (dec.code == dec.range)) {
             return error.CorruptedStream;

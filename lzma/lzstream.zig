@@ -17,10 +17,11 @@ pub const DummyInStream = struct {
     }
 
     pub fn read_u8(self: *Self) !u8 {
-        if (self.pos < self.buf.len) {
+        if ((self.pos + @sizeOf(u8)) <= self.buf.len) {
             self.pos += @sizeOf(u8);
             return self.buf[self.pos - 1];
         } else {
+            warn("## self.pos={} vs self.buf.len={}\n", self.pos, self.buf.len);
             return error.NoMoreData;
         }
     }
@@ -51,6 +52,16 @@ pub const DummyInStream = struct {
             self.pos += dest.len;
         } else {
             return error.NoMoreData;
+        }
+    }
+
+    pub fn take(self: *Self, amount: usize) ![]u8 {
+        if (self.pos < (self.buf.len - amount)) {
+            const pos = self.pos;
+            self.pos += amount;
+            return self.buf[pos .. self.pos];
+        } else {
+            return error.NotEnoughData;
         }
     }
     

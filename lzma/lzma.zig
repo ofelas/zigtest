@@ -133,6 +133,25 @@ pub fn Decoder(comptime T: type, ) type {
             };
         }
 
+        pub fn reset_state(self: *Self, lc: u32, lp: u32, pb: u32) void {
+            self.lc = lc;
+            self.lp = lp;
+            self.pb = pb;
+            self.literal_probs = [_][0x300]u16{[_]u16{0x400} ** 0x300} ** 4096;
+            self.pos_slot_decoder = [_]rangecoder.BitTree(6) {rangecoder.BitTree(6).init()} ** 4;
+            self.align_decoder = rangecoder.BitTree(4).init();
+            self.pos_decoders = [_]u16{0x400} ** 115;
+            self.is_match = [_]u16{0x400} ** 192;
+            self.is_rep = [_]u16{0x400} ** 12;
+            self.is_rep_g0 = [_]u16{0x400} ** 12;
+            self.is_rep_g1 = [_]u16{0x400} ** 12;
+            self.is_rep_g2 = [_]u16{0x400} ** 12;
+            self.is_rep_0long = [_]u16{0x400} ** 192;
+            self.state = 0;
+            self.rep = [_]usize{0,0,0,0};
+            self.len_decoder = rangecoder.LenDecoder(3, 8).init();
+            self.rep_len_decoder = rangecoder.LenDecoder(3, 8).init();
+        }
 
         pub fn set_unpacked_size(self: *Self, unpacked_size: ?u64) void {
             self.unpacked_size = unpacked_size;
