@@ -1,4 +1,6 @@
 // -*- zig -*-
+// Based on https://github.com/gendx/lzma-rs.git
+// License: MIT (see the LICENSE file)
 const builtin = @import("builtin");
 const std = @import("std");
 const mem = std.mem;

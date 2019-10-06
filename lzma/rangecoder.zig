@@ -1,6 +1,7 @@
-// -*- rust -*-
-/// See https://github.com/gendx/lzma-rs.git
-/// License: MIT
+// -*- zig -*-
+// Based on https://github.com/gendx/lzma-rs.git
+// License: MIT (see the LICENSE file)
+
 const std = @import("std");
 const mem = std.mem;
 const warn = std.debug.warn;

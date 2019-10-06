@@ -1,8 +1,6 @@
 // -*- zig -*-
-// Well, this is actually zig...
-// https://en.wikipedia.org/wiki/LZMA
-// See https://github.com/gendx/lzma-rs.git
-// License: MIT
+// Based on https://github.com/gendx/lzma-rs.git
+// License: MIT (see the LICENSE file)
 
 const std = @import("std");
 const mem = std.mem;
